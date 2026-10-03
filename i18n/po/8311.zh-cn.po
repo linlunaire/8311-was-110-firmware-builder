@@ -947,3 +947,93 @@ msgstr "VLAN 监控程序未运行。"
 
 msgid "Failed to load hook script."
 msgstr "无法读取 VLAN 脚本。"
+
+msgid "VLAN rules could not be checked; the monitor will retry."
+msgstr "无法检查 VLAN 规则，监控程序将重试。"
+
+msgid "The inactive bank is empty, incomplete or unreadable. Install a valid firmware image before switching."
+msgstr "备用槽为空、镜像不完整或无法读取。请先安装有效固件再切换。"
+
+msgid "New firmware is installed in the inactive bank. Trial boot it first, then confirm it here after checking management and connectivity. Until confirmation, a later reboot returns to the previous default bank."
+msgstr "新固件写入备用槽。请先试启动，检查管理页面和网络后，再在此确认使用。确认前再次重启会返回原默认槽。"
+
+msgid "Running a trial firmware. The default bank is still"
+msgstr "当前为试启动，默认启动槽仍为"
+
+msgid "Confirm current firmware"
+msgstr "确认使用当前固件"
+
+msgid "Reboot to previous default"
+msgstr "重启回到原默认槽"
+
+msgid "Empty, incomplete or unreadable"
+msgstr "为空、镜像不完整或无法读取"
+
+msgid "Install and trial boot"
+msgstr "安装并试启动"
+
+msgid "Trial boot installed firmware"
+msgstr "试启动已安装的固件"
+
+msgid "Trial boot inactive bank"
+msgstr "试启动备用槽"
+
+msgid "The default bank stays unchanged until you confirm the running firmware."
+msgstr "确认使用试启动的固件后，才会更改默认启动槽。"
+
+msgid "Connection diagnostics"
+msgstr "连接诊断"
+
+msgid "Unable to refresh diagnostics. The displayed sample may be outdated."
+msgstr "无法刷新诊断，当前显示的数据可能已过期。"
+
+msgid "Ingress"
+msgstr "入方向"
+
+msgid "Egress"
+msgstr "出方向"
+
+msgid "No matching service rules were reported."
+msgstr "未报告对应的业务规则。"
+
+msgid "Rule counters are unavailable."
+msgstr "无法读取规则计数。"
+
+msgid "Last sample:"
+msgstr "最近采样："
+
+msgid "Interface"
+msgstr "接口"
+
+msgid "RX packets"
+msgstr "接收包数"
+
+msgid "TX packets"
+msgstr "发送包数"
+
+msgid "RX / TX drops"
+msgstr "接收 / 发送丢包"
+
+msgid "RX / TX errors"
+msgstr "接收 / 发送错误"
+
+msgid "Internet / IPTV rule counters"
+msgstr "上网 / IPTV 规则计数"
+
+msgid "Counters are reported by the driver and may stay zero with hardware offload. They do not prove end-to-end Internet or IPTV connectivity."
+msgstr "计数由驱动提供，硬件卸载时可能保持为零。计数不能单独证明上网或 IPTV 已连通。"
+
+msgid "Direction"
+msgstr "方向"
+
+msgid "Rule"
+msgstr "规则"
+
+msgid "Packets"
+msgstr "包数"
+
+msgid "Drops"
+msgstr "丢包"
+
+msgid "VLAN monitor"
+msgstr "VLAN 监控"

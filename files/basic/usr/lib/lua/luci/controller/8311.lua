@@ -19,6 +19,7 @@ local support_file = "/tmp/support.tar.gz"
 
 local firmwareOutput = ''
 local supportOutput = ''
+local vlan_status_values
 
 local function acquire_lock(path)
 	local fd = nixio.open(path, "w", "rw-------")
@@ -45,6 +46,7 @@ function index()
 	entry({"admin", "8311", "pontop"}, call("action_pontop")).leaf=true
 	entry({"admin", "8311", "pon_dump"}, call("action_pon_dump")).leaf=true
 	entry({"admin", "8311", "gpon_status"}, call("action_gpon_status")).leaf = true
+	entry({"admin", "8311", "diagnostics"}, call("action_diagnostics")).leaf = true
 	entry({"admin", "8311", "vlans", "extvlans"}, call("action_vlan_extvlans"))
 	entry({"admin", "8311", "support", "support.tar.gz"}, call("action_support_download"))
 
@@ -767,7 +769,7 @@ local function measurement(value, format)
 	return tools.is_finite(value) and string.format(translate(format), value) or translate("N/A")
 end
 
-function action_gpon_status()
+local function pon_status_values()
 	local metrics = tools.metrics()
 
 	local eep50 = fs.readfile("/sys/class/pon_mbox/pon_mbox0/device/eeprom50", 60) or ""
@@ -794,8 +796,22 @@ function action_gpon_status()
 		eth_speed = (eth_speed and string.format(translate("%s Mbps"), eth_speed) or translate("N/A")),
 		active_bank = active_bank,
 	}
-	luci.http.prepare_content("application/json")
-	luci.http.write_json(rv)
+	return rv
+end
+
+function action_gpon_status()
+	http.prepare_content("application/json")
+	http.write_json(pon_status_values())
+end
+
+function action_diagnostics()
+	local result = pon_status_values()
+	result.links = tools.link_diagnostics()
+	result.vlan = vlan_status_values()
+	result.vlan_message = result.vlan.message
+	http.header("Cache-Control", "no-store")
+	http.prepare_content("application/json")
+	http.write_json(result)
 end
 
 function action_vlans()
@@ -894,7 +910,7 @@ function action_config()
 	})
 end
 
-function action_vlan_status()
+vlan_status_values = function()
 	local status = tools.vlan_status()
 	local messages = {
 		starting = "VLAN monitor is starting.", scheduled = "VLAN changes are queued.",
@@ -905,15 +921,20 @@ function action_vlan_status()
 		status.message = translate(status.error_stage == "hook" and "Hook-only mode needs a saved hook script." or "Waiting for the PON interface.")
 	elseif status.state == "error" then
 		local failures = { detect="VLAN detection failed; the monitor will retry.", apply="VLAN application failed; the monitor will retry.",
-			hook="The VLAN hook could not be read; the monitor will retry.", configuration="The VLAN mode is invalid." }
+			hook="The VLAN hook could not be read; the monitor will retry.", rules="VLAN rules could not be checked; the monitor will retry.",
+			configuration="The VLAN mode is invalid." }
 		status.message = translate(failures[status.error_stage] or messages.unknown)
 	else
 		status.message = translate(messages[status.state] or messages.unknown)
 	end
 	if status.state ~= "unknown" and not status.running then status.message = translate("VLAN monitor is not running.") end
+	return status
+end
+
+function action_vlan_status()
 	http.header("Cache-Control", "no-store")
 	http.prepare_content("application/json")
-	http.write_json(status)
+	http.write_json(vlan_status_values())
 end
 
 local function save_config()
@@ -1182,7 +1203,7 @@ end
 local firmware_limit = 128 * 1024 * 1024
 local firmware_directory = "/tmp/8311-web-upgrade"
 local firmware_actions = { validate = true, cancel = true, install = true,
-	install_reboot = true, reboot = true, switch_reboot = true }
+	install_reboot = true, reboot = true, switch_reboot = true, commit = true }
 
 local function receive_firmware(path)
 	if not fs.mkdir(firmware_directory, "rwx------") and
@@ -1234,16 +1255,12 @@ local function apply_firmware(action, values, path, bank)
 	end
 	if action == "switch_reboot" then
 		local other = bank == "A" and "B" or (bank == "B" and "A" or nil)
-		if not other or not tools.fw_setenv({ "commit_bank", other }) then
-			return failed("Unable to set the inactive firmware bank; reboot cancelled.")
+		if not other or not tools.bank_available(other) then
+			return failed("The inactive bank is empty, incomplete or unreadable. Install a valid firmware image before switching.")
 		end
-		firmwareUpgradeOutput(translate("Rebooting…"))
-		sys.reboot()
-		return { code = 0 }
-	elseif action == "reboot" then
-		firmwareUpgradeOutput(translate("Rebooting…"))
-		sys.reboot()
-		return { code = 0 }
+		return sys.process.exec({ "/usr/sbin/8311-bankctl.sh", "trial", other }, firmwareUpgradeOutput, firmwareUpgradeOutput) or { code = 1 }
+	elseif action == "reboot" or action == "commit" then
+		return sys.process.exec({ "/usr/sbin/8311-bankctl.sh", action }, firmwareUpgradeOutput, firmwareUpgradeOutput) or { code = 1 }
 	elseif action == "cancel" then
 		if fs.lstat(path) and not fs.remove(path) then return failed("Unable to remove the uploaded firmware.") end
 		return { code = 0 }
@@ -1259,7 +1276,11 @@ local function apply_firmware(action, values, path, bank)
 	if installing then
 		table.insert(command, "--yes")
 		table.insert(command, "--install")
-		if action == "install_reboot" then table.insert(command, "--reboot") end
+		table.insert(command, "--no-commit")
+		if action == "install_reboot" then
+			table.insert(command, "--trial")
+			table.insert(command, "--reboot")
+		end
 	else
 		table.insert(command, "--validate")
 	end
@@ -1277,6 +1298,7 @@ end
 
 function action_firmware()
 	firmwareOutput = ""
+	http.header("Cache-Control", "no-store")
 	local method = http.getenv("REQUEST_METHOD")
 	if method ~= "GET" and method ~= "POST" then http.status(405, "Method Not Allowed"); return end
 	local values, action = {}, "validate"
@@ -1316,13 +1338,17 @@ function action_firmware()
 	end
 	local altversion = { variant = "unknown", version = "unknown", revision = "unknown",
 		bank = version.bank == "A" and "B" or (version.bank == "B" and "A" or "unknown") }
-	for key, value in string.gmatch(util.exec("/usr/sbin/alternate_firmware_info"), "([^\n=]+)=([^\n]+)") do
+	local rebooting = result and result.code == 0 and (action == "reboot" or action == "switch_reboot" or action == "install_reboot")
+	local available = not rebooting and tools.bank_available(altversion.bank)
+	local alternate = available and util.exec("/usr/sbin/alternate_firmware_info") or ""
+	for key, value in string.gmatch(alternate, "([^\n=]+)=([^\n]+)") do
 		local field = ({ FW_VARIANT = "variant", FW_VERSION = "version", FW_REVISION = "revision" })[key]
 		if field then altversion[field] = value end
 	end
 	ltemplate.render("8311/firmware", {
 		version = version, altversion = altversion, firmware_file_exists = fs.lstat(path, "type") == "reg",
-		firmware_exec = result, firmware_installed = installed, firmware_output = firmwareOutput, firmware_action = action
+		firmware_exec = result, firmware_installed = installed, firmware_output = firmwareOutput, firmware_action = action,
+		bank_available = available, committed_bank = tools.fwenv_get("commit_bank")
 	})
 end
 

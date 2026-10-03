@@ -72,6 +72,32 @@ input#firmware-file::file-selector-button {
 	z-index: 1000;
 }
 
+#connection-diagnostics .diagnostic-summary {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr));
+	gap: 0.8rem 1.5rem;
+}
+#connection-diagnostics .diagnostic-summary strong,
+#connection-diagnostics .diagnostic-summary span {
+	display: block;
+}
+#connection-diagnostics .diagnostic-scroll {
+	max-width: 100%;
+	overflow-x: auto;
+}
+#connection-diagnostics td, #connection-diagnostics th {
+	padding: 0.5rem;
+	text-align: left;
+}
+#connection-diagnostics table {
+	min-width: 42rem;
+	width: 100%;
+}
+#connection-diagnostics td:nth-child(3) {
+	min-width: 12rem;
+	overflow-wrap: anywhere;
+}
+
 #hook-script-overlay {
 	position: absolute;
 	top: 0;

@@ -11,6 +11,8 @@ _help() {
 	printf -- '-v|--validate\t\tValidate images from the firmware upgrade tar file.\n'
 	printf -- '-i|--install\t\tValidate and install images to the inactive firmware bank.\n'
 	printf -- '-r|--reboot\t\tReboot after a successful firmware upgrade.\n'
+	printf -- '--no-commit\t\tKeep the current default boot bank after installation.\n'
+	printf -- '--trial\t\t\tSelect the installed bank for one boot; keep the current default.\n'
 	printf -- '-y|--yes\t\tAnswer yes to any prompts.\n'
 	printf -- '-h|--help\t\tThis help text.\n\n'
 	printf -- '--\t\t\tDon'"'"'t process any further options, the next parameter is the firmware upgrade tar file.\n'
@@ -35,6 +37,8 @@ VALIDATE=false
 INSTALL=false
 YES=false
 REBOOT=false
+NO_COMMIT=false
+TRIAL=false
 TAR=
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -55,6 +59,8 @@ while [ $# -gt 0 ]; do
 		-r|--reboot)
 			REBOOT=true
 		;;
+		--no-commit) NO_COMMIT=true ;;
+		--trial) TRIAL=true; NO_COMMIT=true ;;
 		--)
 			[ $# -eq 2 ] && [ -z "$TAR" ] || { _help; exit 1; }
 			TAR="$2"
@@ -75,6 +81,10 @@ while [ $# -gt 0 ]; do
 	esac
 	shift
 done
+
+if $NO_COMMIT && $REBOOT && ! $TRIAL; then
+	_err "Use --trial with --no-commit to reboot into the installed image."
+fi
 
 if ! $VALIDATE && ! $INSTALL; then
 	VALIDATE=true
@@ -122,6 +132,7 @@ fwenv_set() {
 	for i in 0 1; do
 		fw_setenv "$1" "$2" || return $?
 	done
+	[ "$(fw_printenv -n "$1" 2>/dev/null)" = "$2" ]
 }
 
 ubi_default_order() {
@@ -260,6 +271,8 @@ LOCK="/tmp/8311-firmware-upgrade.lock"
 
 	INSTALL_BANK=$(inactive_fwbank) || _err "Cannot determine the active firmware bank."
 	case "$INSTALL_BANK" in A|B) ;; *) _err "Invalid inactive firmware bank." ;; esac
+	[ "$(fw_printenv -n commit_bank 2>/dev/null)" = "$(active_fwbank)" ] ||
+		_err "Confirm or leave the current trial before installing another firmware."
 	echo "Active firmware bank is $(active_fwbank), will install to bank $INSTALL_BANK."
 
 		echo
@@ -268,9 +281,22 @@ LOCK="/tmp/8311-firmware-upgrade.lock"
 			_yesno || exit 2
 		fi
 
+		fwenv_set "img_valid$INSTALL_BANK" false || _err "Cannot mark the target bank incomplete."
+		rm -f /tmp/8311-alt-firmware
 		install_image "KERNEL" "kernel.bin" "Kernel" "kernel$INSTALL_BANK"
 		install_image "BOOTCORE" "bootcore.bin" "Bootcore" "bootcore$INSTALL_BANK"
 		install_image "ROOTFS" "rootfs.img" "RootFS" "rootfs$INSTALL_BANK"
+		fwenv_set "img_valid$INSTALL_BANK" true || _err "Cannot mark the installed bank complete."
+
+		if $NO_COMMIT; then
+			if $TRIAL; then
+				fwenv_set img_activate "$INSTALL_BANK" || _err "Cannot select the installed bank for a trial boot."
+				echo "Bank $INSTALL_BANK is ready for one trial boot; the default bank is unchanged."
+			else
+				echo "Firmware installed; the default boot bank is unchanged."
+				exit 0
+			fi
+		else
 
 		echo
 		if ! $YES; then
@@ -280,6 +306,7 @@ LOCK="/tmp/8311-firmware-upgrade.lock"
 
 		fwenv_set "commit_bank" "$INSTALL_BANK" && echo "Set commit_bank to $INSTALL_BANK, reboot to boot new firmware." || _err "Error setting commit_bank to $INSTALL_BANK."
 		echo
+		fi
 
 		if ! $YES && ! $REBOOT; then
 			echo -n "Would you like to reboot to the new firmware now? (y/N) "
@@ -289,7 +316,7 @@ LOCK="/tmp/8311-firmware-upgrade.lock"
 
 		if $REBOOT; then
 			echo "Rebooting..."
-			( sleep 3 && reboot; ) 9>&- &
+			( sleep 3 && reboot; ) >/dev/null 2>&1 &
 		fi
 ) 9>"$LOCK"
 exit $?

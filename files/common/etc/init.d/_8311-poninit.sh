@@ -97,13 +97,20 @@ boot() {
 	[ "$(fwenv_get "$VALID")" != "true" ] && fwenv_set "$VALID" "true"
 
 	# Check validity of inactive fw bank
+	(
+	flock -n 9 || exit 0
 	INACTIVE=$(inactive_fwbank)
 	VALID="img_valid$INACTIVE"
-	[ "$(fwenv_get "$VALID")" != "true" ] && {
-		alternate_firmware_info &>/dev/null &&
-		fwenv_set "$VALID" "true" ||
-		fwenv_set "$VALID" "false"
-	}
+	# Do not trust a stale true flag after a bank has been cleared or damaged.
+	# A failed installer leaves false until a complete install succeeds.
+	if [ "$(fwenv_get "$VALID")" != false ] &&
+		timeout -k 2 25 /usr/sbin/8311-bank-check.sh "$INACTIVE" >/dev/null 2>&1; then
+		EXPECTED_VALID=true
+	else
+		EXPECTED_VALID=false
+	fi
+	[ "$(fwenv_get "$VALID")" = "$EXPECTED_VALID" ] || fwenv_set "$VALID" "$EXPECTED_VALID"
+	) 9>/tmp/8311-firmware-upgrade.lock
 
 	start "$@"
 

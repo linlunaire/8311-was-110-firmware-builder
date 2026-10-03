@@ -86,6 +86,8 @@ class UpgradeTests(ShellFixture):
         (self.root / "dev").mkdir()
         (self.root / "proc").mkdir()
         (self.root / "proc/cmdline").write_text("console=ttyS0 rootfsname=rootfsA\n")
+        (self.root / "env").mkdir()
+        (self.root / "env/commit_bank").write_text("A")
         self.command("flock", '[ "${LOCK_FAIL:-0}" = 0 ]')
         self.command("ubinfo", '''
 case "$3" in
@@ -107,7 +109,10 @@ cat > "$3"
         self.command("fw_setenv", '''
 echo "env:$1:$2" >> "$OPS"
 [ "${ENV_FAIL:-0}" = 0 ] || exit 8
+[ "${ENV_FAIL_KEY:-}" != "$1" ] || exit 8
+printf '%s' "$2" > "$FIXTURE/env/$1"
 ''')
+        self.command("fw_printenv", 'cat "$FIXTURE/env/$2" 2>/dev/null')
         self.command("reboot", 'echo reboot >> "$OPS"')
         self.command("sleep", ":")
         # A test must fail loudly if a new destructive command escapes its mocks.
@@ -142,23 +147,27 @@ echo "env:$1:$2" >> "$OPS"
     def test_install_validates_and_writes_only_inactive_bank(self):
         result = self.run_script(self.upgrade, "--install", "--yes", self.archive())
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual([line.rsplit("_", 1)[-1] for line in self.operations()[:3]], ["3", "4", "5"])
-        self.assertEqual(self.operations()[3:], ["env:commit_bank:B"] * 2)
+        self.assertEqual(self.operations()[:2], ["env:img_validB:false"] * 2)
+        self.assertEqual([line.rsplit("_", 1)[-1] for line in self.operations()[2:5]], ["3", "4", "5"])
+        self.assertEqual(self.operations()[5:], ["env:img_validB:true"] * 2 + ["env:commit_bank:B"] * 2)
         self.assert_clean_stage()
         self.assertTrue((self.root / "tmp/8311-firmware-upgrade.lock").exists())
 
     def test_install_from_bank_b_targets_bank_a(self):
         (self.root / "proc/cmdline").write_text("rootfsname=rootfsB\n")
+        (self.root / "env/commit_bank").write_text("B")
         result = self.run_script(self.upgrade, "--install", "--yes", self.archive())
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual([line.rsplit("_", 1)[-1] for line in self.operations()[:3]], ["0", "1", "2"])
+        self.assertEqual([line.rsplit("_", 1)[-1] for line in self.operations() if line.startswith("write:")], ["0", "1", "2"])
 
     def test_declining_commit_keeps_boot_bank_and_uses_volume_names(self):
         (self.root / "proc/cmdline").write_text("rootfsname=rootfsB\n")
+        (self.root / "env/commit_bank").write_text("B")
         self.env["REMAPPED_A"] = "1"
         result = self.run_script(self.upgrade, "--install", self.archive(), stdin="y\nn\n")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual([line.rsplit("_", 1)[-1] for line in self.operations()], ["0", "2", "1"])
+        self.assertEqual([line.rsplit("_", 1)[-1] for line in self.operations() if line.startswith("write:")], ["0", "2", "1"])
+        self.assertNotIn("env:commit_bank:A", self.operations())
         self.assert_clean_stage()
 
     def test_explicit_install_rejects_bad_last_image_before_any_write(self):
@@ -190,7 +199,7 @@ echo "env:$1:$2" >> "$OPS"
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn("reboot", self.operations())
                 if failure != "ENV_FAIL":
-                    self.assertFalse(any(line.startswith("env:") for line in self.operations()))
+                    self.assertEqual([line for line in self.operations() if line.startswith("env:")], ["env:img_validB:false"] * 2)
                 self.assert_clean_stage()
                 self.ops.unlink()
                 del self.env[failure]
@@ -217,6 +226,36 @@ echo "env:$1:$2" >> "$OPS"
         result = self.run_script(self.upgrade, "--install", self.archive(), stdin="n\n")
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertEqual(self.operations(), [])
+
+    def test_web_install_preserves_default_and_trial_only_changes_one_boot_selection(self):
+        for trial in (False, True):
+            with self.subTest(trial=trial):
+                args = ["--install", "--yes", "--no-commit"] + (["--trial"] if trial else [])
+                result = self.run_script(self.upgrade, *args, self.archive())
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((self.root / "env/commit_bank").read_text(), "A")
+                self.assertEqual((self.root / "env/img_activate").exists(), trial)
+                if trial:
+                    self.assertEqual((self.root / "env/img_activate").read_text(), "B")
+
+    def test_trial_session_cannot_overwrite_its_default_bank(self):
+        (self.root / "env/commit_bank").write_text("B")
+        result = self.run_script(self.upgrade, "--install", "--yes", "--no-commit", self.archive())
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.operations(), [])
+
+    def test_reboot_without_commit_requires_an_explicit_trial_before_any_writes(self):
+        result = self.run_script(self.upgrade, "--install", "--yes", "--no-commit", "--reboot", self.archive())
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.operations(), [])
+
+    def test_failed_final_commit_keeps_old_default_and_never_reboots(self):
+        self.env["ENV_FAIL_KEY"] = "commit_bank"
+        result = self.run_script(self.upgrade, "--install", "--yes", "--reboot", self.archive())
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.root / "env/commit_bank").read_text(), "A")
+        self.assertEqual((self.root / "env/img_validB").read_text(), "true")
+        self.assertNotIn("reboot", self.operations())
 
 
 class FwenvTests(ShellFixture):
@@ -545,8 +584,13 @@ echo "$count" > "$FIXTURE/fixes"
 if [ "${FAIL_UNTIL:-0}" -ge "$count" ]; then exit 5; fi
 if [ -f "$FIXTURE/tmp/8311-config.sh" ]; then echo cached >> "$OPS"; else echo fresh >> "$OPS"; fi
 echo cache > "$FIXTURE/tmp/8311-config.sh"
+echo present > "$FIXTURE/live-rules"
 ''')
-        for name in ("8311-detect-config.sh", "8311-fix-vlans.sh"):
+        self.command("8311-vlan-rules-hash.sh", '''
+[ "${RULE_READ_FAIL:-0}" = 0 ] || exit 4
+if [ -f "$FIXTURE/live-rules" ]; then printf '%064d\\n' 1; else printf '%064d\\n' 2; fi
+''')
+        for name in ("8311-detect-config.sh", "8311-fix-vlans.sh", "8311-vlan-rules-hash.sh"):
             shutil.copy2(self.bin / name, self.root / "usr/sbin" / name)
 
     def run_daemon(self):
@@ -562,6 +606,33 @@ echo cache > "$FIXTURE/tmp/8311-config.sh"
         fields = (self.root / "tmp/8311-vlans.status").read_text().strip().split("\t")
         self.assertEqual(fields[4:], ["applied", "none", "0"])
         self.assertGreater(int(fields[2]), 0)
+
+    def test_lost_rules_are_restored_without_a_topology_change(self):
+        self.env["MAX_CYCLES"] = "9"
+        sleep = self.bin / "sleep"
+        sleep.write_text(sleep.read_text().replace('if [ "$cycle" = 1 ]; then',
+            'if [ "$cycle" = 1 ]; then\n    rm -f "$FIXTURE/live-rules"'), newline="\n")
+        ops = self.run_daemon()
+        self.assertEqual(ops.count("fix"), 2)
+        self.assertTrue((self.root / "live-rules").exists())
+
+    def test_interface_reappearance_forces_a_fresh_apply(self):
+        sleep = self.bin / "sleep"
+        sleep.write_text(sleep.read_text().replace('if [ "$cycle" = 1 ]; then', '''
+if [ "$cycle" = 2 ]; then mkdir "$FIXTURE/sys/devices/virtual/net/gem-omci"; fi
+if [ "$cycle" = 1 ]; then
+    rmdir "$FIXTURE/sys/devices/virtual/net/gem-omci"
+    rm -f "$FIXTURE/live-rules"
+'''), newline="\n")
+        self.assertEqual(self.run_daemon().count("fix"), 2)
+        self.assertTrue((self.root / "live-rules").exists())
+
+    def test_rule_read_failures_never_report_a_confirmed_application(self):
+        self.env["RULE_READ_FAIL"] = "1"
+        self.run_daemon()
+        fields = (self.root / "tmp/8311-vlans.status").read_text().strip().split("\t")
+        self.assertEqual(fields[2], "0")
+        self.assertEqual(fields[4:6], ["error", "rules"])
 
     def test_failures_back_off_and_success_resets_delay(self):
         self.env.update(FAIL_UNTIL="3", MAX_CYCLES="6")

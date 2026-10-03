@@ -180,6 +180,59 @@ function rebootFirmware(input) {
 	return submitFirmwareForm(input);
 }
 
+function confirmCurrentFirmware(input) {
+	$('#firmware-file').prop('disabled', true);
+	$('#firmware-action').val('commit');
+	return submitFirmwareForm(input);
+}
+
+function startConnectionDiagnostics(panel) {
+	var pending = false;
+	var message = document.getElementById('diagnostic-message');
+	function value(input) { return input == null ? panel.dataset.unavailable : String(input); }
+	function row(parent, values) {
+		var tr = document.createElement('tr');
+		values.forEach(function (text) {
+			var td = document.createElement('td');
+			td.textContent = value(text);
+			tr.appendChild(td);
+		});
+		parent.appendChild(tr);
+	}
+	function refresh() {
+		if (pending || document.hidden) return;
+		pending = true;
+		$.ajax({ url: panel.dataset.url, dataType: 'json', timeout: 10000, cache: false }).done(function (data) {
+			panel.querySelectorAll('[data-diagnostic]').forEach(function (node) {
+				node.textContent = value(data[node.dataset.diagnostic]);
+			});
+			var links = document.getElementById('diagnostic-links');
+			var rules = document.getElementById('diagnostic-rules');
+			links.replaceChildren(); rules.replaceChildren();
+			(data.links || []).forEach(function (link) {
+				var counters = link.counters || {};
+				row(links, [link.device, counters.rx_packets, counters.tx_packets,
+					value(counters.rx_dropped) + ' / ' + value(counters.tx_dropped),
+					value(counters.rx_errors) + ' / ' + value(counters.tx_errors)]);
+				(link.filters || []).forEach(function (filter) {
+					var label = filter.protocol + ' · ' + filter.pref + ' · ' + value(filter.action);
+					if (filter.vlan_id) label += ' · VLAN ' + filter.vlan_id;
+					row(rules, [link.device, filter.direction === 'ingress' ? panel.dataset.ingress : panel.dataset.egress,
+						label, filter.packets, filter.dropped]);
+				});
+				if (!link.available || !link.rules_available) row(rules, [link.device, panel.dataset.rulesUnavailable, '', '', '']);
+			});
+			if (!rules.children.length) row(rules, [panel.dataset.noRules, '', '', '', '']);
+			message.textContent = panel.dataset.sampled + ' ' + new Date().toLocaleTimeString();
+		}).fail(function () {
+			message.textContent = panel.dataset.failure;
+		}).always(function () { pending = false; });
+	}
+	refresh();
+	document.addEventListener('visibilitychange', refresh);
+	return window.setInterval(refresh, 10000);
+}
+
 function installFirmware(input, reboot) {
 	action = 'install';
 	if (reboot)
@@ -334,6 +387,8 @@ function resetSettings(input) {
 }
 
 $(document).ready(function () {
+	var diagnostics = document.getElementById('connection-diagnostics');
+	if (diagnostics) startConnectionDiagnostics(diagnostics);
 	var configForm = document.getElementById('8311-config');
 	if (configForm) {
 		$(configForm).on('input change', function () {

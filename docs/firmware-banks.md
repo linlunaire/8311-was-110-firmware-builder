@@ -55,7 +55,29 @@ CN 固件对应卷的有效镜像字节比较完全一致（UBI 卷末尾填充�
 新版本不承诺迁移 CN 特有 VLAN/IGMP 参数；真实光纤、Internet/IPTV 和
 断电恢复仍需分别验证。
 
-## 2026-10-03 实际安装结果
+## 网页试启动与空槽保护
+
+网页安装保留当前默认槽；“安装并试启动”只设置 `img_activate`。
+从新槽成功启动后，网页显示“确认使用当前固件”和“重启回到原默认槽”。
+只有确认后才更新 `commit_bank`。试启动期间禁止安装另一份固件，避免覆盖
+仍作为默认槽的回退镜像。这个流程需要设备再次重启才会返回原默认槽，
+没有新增自动重启计时器，也不承诺启动卡死后的自动恢复。
+
+页面用镜像头快速判断备用槽是否可识别。实际切换前还会验证 kernel 和
+bootcore 的 uImage 头与数据 CRC、rootfs 的 SquashFS 头、大小、只读挂载
+及必要启动文件。空槽、失败安装留下的 `img_valid=false`、校验失败或
+正在执行另一项升级时，后台拒绝切换。启动时也会重新检查旧的有效标志；
+不会仅凭 `img_valid=true` 认定镜像完整。
+
+安装器在写入前将目标标为未完成，所有组件读回校验通过后才标为完成。
+网页切换、确认、重启和 CLI 安装使用同一升级锁，环境修改保留双写与读回。
+CLI 新增 `--no-commit` 和 `--trial`；原先未指定这些选项的交互流程保留。
+
+镜像结构依据 [U-Boot legacy image header](https://github.com/u-boot/u-boot/blob/master/include/image.h)
+和 [Linux SquashFS superblock](https://github.com/torvalds/linux/blob/master/fs/squashfs/squashfs_fs.h)。
+这些检查用于拒绝已知无效镜像；正常启动、业务连接和断电故障仍需分别验证。
+
+## 2026-10-03 此前安装记录
 
 最终安装版本为 `v2.8.3-opt1_basic_b159a2c`，当前运行 A，`commit_bank=A`，一次激活标志已清除。流程中先写 A 并逐组件读回，保持默认 B 后通过 `img_activate=A` 试启动；也实际回到原 B，再写入修正后的 A。确认正式镜像上的 HTTPS 管理、备份与恢复预览正常后，才两次写入默认槽并读回确认 A。
 

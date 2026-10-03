@@ -5,11 +5,35 @@ local esc = tools.html_escape
 -%>
 
 <%+header%>
+<link rel="stylesheet" href="<%=resource%>/view/8311.css" />
 <script type="text/javascript" src="<%=resource%>/jquery-3.7.1.min.js"></script>
 <script type="text/javascript" src="<%=resource%>/view/8311.js"></script>
 
 <h2 name="content"><%:PON Status%></h2>
-<br />
+<section id="connection-diagnostics" class="cbi-section" data-url="<%=url('admin', '8311', 'diagnostics')%>"
+	data-unavailable="<%:N/A%>" data-failure="<%:Unable to refresh diagnostics. The displayed sample may be outdated.%>"
+	data-ingress="<%:Ingress%>" data-egress="<%:Egress%>" data-no-rules="<%:No matching service rules were reported.%>"
+	data-rules-unavailable="<%:Rule counters are unavailable.%>" data-sampled="<%:Last sample:%>">
+	<h3><%:Connection diagnostics%></h3>
+	<div class="diagnostic-summary">
+		<div><strong><%:PON PLOAM Status%></strong><span data-diagnostic="status">—</span></div>
+		<div><strong><%:RX Power / TX Power / TX Bias%></strong><span data-diagnostic="power">—</span></div>
+		<div><strong><%:CPU0 / CPU1 / Optic Temperature%></strong><span data-diagnostic="temperature">—</span></div>
+		<div><strong><%:ETH Speed%></strong><span data-diagnostic="eth_speed">—</span></div>
+		<div><strong><%:VLAN monitor%></strong><span data-diagnostic="vlan_message">—</span></div>
+	</div>
+	<p id="diagnostic-message" role="status" aria-live="polite"></p>
+	<div class="diagnostic-scroll">
+		<table class="table"><thead><tr><th><%:Interface%></th><th><%:RX packets%></th><th><%:TX packets%></th>
+			<th><%:RX / TX drops%></th><th><%:RX / TX errors%></th></tr></thead><tbody id="diagnostic-links"></tbody></table>
+	</div>
+	<details>
+		<summary><%:Internet / IPTV rule counters%></summary>
+		<p><%:Counters are reported by the driver and may stay zero with hardware offload. They do not prove end-to-end Internet or IPTV connectivity.%></p>
+		<div class="diagnostic-scroll"><table class="table"><thead><tr><th><%:Interface%></th><th><%:Direction%></th>
+			<th><%:Rule%></th><th><%:Packets%></th><th><%:Drops%></th></tr></thead><tbody id="diagnostic-rules"></tbody></table></div>
+	</details>
+</section>
 
 <ul class="cbi-tabmenu">
 <% for pageid, page in pairs(pages) do %>

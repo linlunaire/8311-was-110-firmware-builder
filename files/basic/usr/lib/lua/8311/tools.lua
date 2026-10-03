@@ -116,13 +116,19 @@ function request_vlan_reload()
 	return fs.writefile("/tmp/8311-vlans.reload", "\n") == 1
 end
 
+function bank_available(bank)
+	if bank ~= "A" and bank ~= "B" then return false end
+	local result = sys.process.exec({ "/usr/bin/timeout", "-k", "1", "5", "/usr/sbin/8311-bank-check.sh", "--quick", bank })
+	return result and result.code == 0
+end
+
 function vlan_status()
 	local result = { state = "unknown", running = false, last_applied_at = 0, error_stage = "none", retry_in = 0 }
 	local raw = fs.readfile("/tmp/8311-vlans.status")
 	if type(raw) == "string" and #raw <= 256 then
 		local pid, observed, applied, mode, state, stage, retry = raw:match("^(%d+)\t(%d+)\t(%d+)\t(%w+)\t([a-z]+)\t([a-z]+)\t(%d+)\n$")
 		local states = { starting=true, scheduled=true, applying=true, applied=true, disabled=true, waiting=true, error=true }
-		local stages = { none=true, hook=true, pon=true, detect=true, apply=true, configuration=true }
+		local stages = { none=true, hook=true, pon=true, detect=true, apply=true, rules=true, configuration=true }
 		local modes = { ["0"]=true, ["1"]=true, ["2"]=true, unknown=true }
 		if pid and modes[mode] and states[state] and stages[stage] and tonumber(retry) <= 60 and
 			tonumber(pid) >= 1 and tonumber(pid) <= 4194304 and
@@ -136,6 +142,61 @@ function vlan_status()
 	end
 	if fs.readfile("/tmp/8311-vlans.reload") then result.state = "scheduled" end
 	return result
+end
+
+local function counter(value)
+	if type(value) ~= "string" then return nil end
+	value = value:match("^%s*(%d+)%s*$")
+	-- Keep decimal strings: 64-bit hardware counters can exceed JS precision.
+	return value and #value <= 20 and value or nil
+end
+
+function link_diagnostics()
+	local links = {}
+	for _, device in ipairs({ "eth0_0", "eth0_0_2" }) do
+		local path = "/sys/class/net/" .. device
+		local link = { device = device, counters = {}, filters = {}, rules_available = true,
+			available = counter(fs.readfile(path .. "/ifindex", 32)) ~= nil }
+		if link.available then
+			for _, key in ipairs({ "rx_packets", "tx_packets", "rx_dropped", "tx_dropped", "rx_errors", "tx_errors" }) do
+				link.counters[key] = counter(fs.readfile(path .. "/statistics/" .. key, 32))
+			end
+			for _, direction in ipairs(device == "eth0_0" and { "ingress", "egress" } or { "egress" }) do
+				local chunks, size = {}, 0
+				local result = sys.process.exec({ "/usr/bin/timeout", "-k", "1", "2", "/sbin/tc", "-s", "filter", "show", "dev", device, direction }, function(chunk)
+					size = size + #chunk
+					if size <= 65536 then table.insert(chunks, chunk) end
+				end)
+				if not result or result.code ~= 0 or size > 65536 then
+					link.rules_available = false
+				else
+					local rule, first_action
+					for line in (table.concat(chunks) .. "\n"):gmatch("([^\n]*)\n") do
+						if line:match("^filter ") then
+							rule, first_action = nil, false
+							local protocol, pref, handle = line:match("^filter protocol (%S+) pref (%d+) flower handle (%S+)")
+							if pref and tonumber(pref) <= 3 and #link.filters < 32 then
+								rule = { direction = direction, protocol = protocol, pref = tonumber(pref), handle = handle }
+								table.insert(link.filters, rule)
+							end
+						elseif rule then
+							rule.vlan_id = line:match("^%s*vlan_id (%d+)%s*$") or rule.vlan_id
+							local order, action = line:match("^%s*action order (%d+): (.+)$")
+							if order then
+								first_action = order == "1"
+								if first_action then rule.action = action:sub(1, 180) end
+							elseif first_action then
+								local packets, dropped = line:match("Sent %d+ bytes (%d+) pkt %(dropped (%d+)")
+								if packets then rule.packets, rule.dropped = counter(packets), counter(dropped) end
+							end
+						end
+					end
+				end
+			end
+		end
+		table.insert(links, link)
+	end
+	return links
 end
 
 -- The same field definitions supply the HTML constraints and server checks.

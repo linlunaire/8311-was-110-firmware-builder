@@ -17,6 +17,8 @@ trap 'exit 0' HUP INT TERM
 
 FIX_ENABLED=$(fwenv_get_8311 "fix_vlans" "1")
 LAST_HASH=""
+LAST_RULE_HASH=""
+RULE_CHECK_CYCLES=0
 REDETECT=false
 RETRY_DELAY=5
 LAST_APPLIED=0
@@ -45,6 +47,8 @@ while true; do
 		rm -f "$RELOAD"
 		FIX_ENABLED=$(fwenv_get_8311 "fix_vlans" "1")
 		LAST_HASH=""
+		LAST_RULE_HASH=""
+		RULE_CHECK_CYCLES=0
 		REDETECT=true
 		RETRY_DELAY=5
 		publish_status scheduled none 0
@@ -72,18 +76,42 @@ while true; do
 				HOOK_HASH=$(sha256sum "$HOOK") || { FAILED=true; FAIL_STAGE=hook; }
 			fi
 			HASH="$HASH:$HOOK_HASH"
+			# Every six healthy cycles, check rules even if the topology did not
+			# change. Driver/OLT updates can remove filters from existing links.
+			if ! $FAILED && [ -n "$LAST_HASH" ] && [ "$RULE_CHECK_CYCLES" -le 0 ]; then
+				if timeout -k 1 10 /usr/sbin/8311-vlan-rules-hash.sh > "$OUTPUT" 2>&1 &&
+					grep -Eq '^[0-9a-fA-F]{64}$' "$OUTPUT"; then
+					RULE_HASH=$(cat "$OUTPUT")
+					RULE_CHECK_CYCLES=6
+					if [ "$RULE_HASH" != "$LAST_RULE_HASH" ]; then
+						LAST_HASH=""
+						REDETECT=true
+					fi
+				else
+					FAILED=true
+					FAIL_STAGE=rules
+				fi
+			fi
 			if ! $FAILED && [ "$HASH" != "$LAST_HASH" ]; then
 				# Cached detection also contains the old local VLAN settings.
 				$REDETECT && CMD="rm -f /tmp/8311-config.sh && $CMD"
 				publish_status applying none 0
 				if timeout -k 5 30 flock -n /tmp/8311-fix-vlans.lock -c "$CMD" > "$OUTPUT" 2>&1; then
-					LAST_HASH="$HASH"
-					REDETECT=false
-					RETRY_DELAY=5
-					LAST_APPLIED=$(date +%s)
-					publish_status applied none 0
-					echo "8311 VLANs daemon: configuration applied" | to_console
 					tail -c 8192 "$OUTPUT" | to_console
+					if timeout -k 1 10 /usr/sbin/8311-vlan-rules-hash.sh > "$OUTPUT" 2>&1 &&
+						grep -Eq '^[0-9a-fA-F]{64}$' "$OUTPUT"; then
+						LAST_RULE_HASH=$(cat "$OUTPUT")
+						RULE_CHECK_CYCLES=6
+						LAST_HASH="$HASH"
+						REDETECT=false
+						RETRY_DELAY=5
+						LAST_APPLIED=$(date +%s)
+						publish_status applied none 0
+						echo "8311 VLANs daemon: configuration applied" | to_console
+					else
+						FAILED=true
+						FAIL_STAGE=rules
+					fi
 				else
 					FAILED=true
 					FAIL_STAGE=apply
@@ -97,6 +125,12 @@ while true; do
 			FAIL_STAGE=detect
 		fi
 	else
+		# A recreated PON interface needs rules even if its final topology is
+		# identical to the previous snapshot.
+		LAST_HASH=""
+		LAST_RULE_HASH=""
+		RULE_CHECK_CYCLES=0
+		REDETECT=true
 		case "$FIX_ENABLED" in
 			0) publish_status disabled none 0 ;;
 			2) if [ -z "$CMD" ]; then publish_status waiting hook 0; else publish_status waiting pon 0; fi ;;
@@ -114,4 +148,5 @@ while true; do
 	fi
 	# Keep the healthy-state recovery interval. Only failed work backs off.
 	sleep "$DELAY"
+	[ "$RULE_CHECK_CYCLES" -le 0 ] || RULE_CHECK_CYCLES=$((RULE_CHECK_CYCLES - 1))
 done

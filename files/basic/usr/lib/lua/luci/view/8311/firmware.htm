@@ -7,6 +7,8 @@ local upload_enable = not firmware_file_exists and not firmware_installed and no
 local install_enable = firmware_file_exists and not failed and firmware_action == "validate"
 local cancel_enable = firmware_file_exists and not rebooting
 local reboot_enable = firmware_installed and firmware_action == "install"
+local trial_boot = (committed_bank == "A" or committed_bank == "B") and version.bank ~= committed_bank
+local can_switch = bank_available and not trial_boot
 -%>
 <%+header%>
 <link rel="stylesheet" href="<%=resource%>/view/8311.css" />
@@ -83,20 +85,28 @@ local reboot_enable = firmware_installed and firmware_action == "install"
 
 <div class="cbi-section">
 	<h3><%:Flash new firmware image%></h3>
+	<p class="cbi-section-descr"><%:New firmware is installed in the inactive bank. Trial boot it first, then confirm it here after checking management and connectivity. Until confirmation, a later reboot returns to the previous default bank.%></p>
 	<p class="cbi-section-descr"><%:Upload a WAS-110 8311 local-upgrade.tar file. It is checked before installation to the inactive bank. Generic OpenWrt and ImmortalWrt sysupgrade images are not accepted.%></p>
 	<p class="cbi-section-descr"><%:Current 8311 settings and the VLAN hook are kept during a normal upgrade. Reinstalling this firmware does not reset them. Keep a downloaded backup for later recovery, and use Reset to defaults only when you intend to clear settings.%></p>
 	<form id="firmware-form" method="post" action="<%=url('admin', 'system', 'flash')%>" enctype="multipart/form-data">
 		<input type="hidden" name="token" value="<%=token%>" />
 		<input id="firmware-action" type="hidden" name="action" value="validate" />
+<% if trial_boot and not rebooting then %>
+		<div class="recovery-feedback" id="firmware-trial-status" role="status">
+			<p><%:Running a trial firmware. The default bank is still%> <%=esc(committed_bank)%>.</p>
+			<button type="button" class="firmware-button cbi-button cbi-button-action important" onclick="return confirmCurrentFirmware(this);"><%:Confirm current firmware%></button>
+			<button type="button" class="firmware-button cbi-button cbi-button-reset" onclick="return rebootFirmware(this);"><%:Reboot to previous default%></button>
+		</div>
+<% end %>
 		<div class="cbi-value">
 			<label class="cbi-value-title"><%:Active Firmware%></label>
 			<div class="cbi-value-field firmware-version"><%=esc(version.version)%> · <%=esc(version.variant)%> · <%:Bank%> <%=esc(version.bank)%></div>
 		</div>
 		<div class="cbi-value">
 			<label class="cbi-value-title"><%:Inactive Firmware%></label>
-			<div class="cbi-value-field firmware-version"><%=esc(altversion.version)%> · <%=esc(altversion.variant)%> · <%:Bank%> <%=esc(altversion.bank)%></div>
+			<div class="cbi-value-field firmware-version"><% if rebooting then %><%:Rebooting…%><% elseif bank_available then %><%=esc(altversion.version)%> · <%=esc(altversion.variant)%><% else %><%:Empty, incomplete or unreadable%><% end %> · <%:Bank%> <%=esc(altversion.bank)%></div>
 		</div>
-<% if upload_enable then %>
+<% if upload_enable and not trial_boot then %>
 		<div class="cbi-value">
 			<label class="cbi-value-title" for="firmware-file"><%:Firmware image%></label>
 			<div class="cbi-value-field">
@@ -108,15 +118,15 @@ local reboot_enable = firmware_installed and firmware_action == "install"
 		</div>
 <% end %>
 		<div class="firmware-actions">
-<% if install_enable then %>
+<% if install_enable and not trial_boot then %>
 			<button class="firmware-button cbi-button cbi-button-action important" type="button" onclick="return installFirmware(this, false);"><%:Install%></button>
-			<button class="firmware-button cbi-button cbi-button-action important" type="button" onclick="return installFirmware(this, true);"><%:Install and Reboot%></button>
+			<button class="firmware-button cbi-button cbi-button-action important" type="button" onclick="return installFirmware(this, true);"><%:Install and trial boot%></button>
 <% end %>
 <% if cancel_enable then %>
 			<button class="firmware-button cbi-button cbi-button-reset" type="button" onclick="return cancelFirmware(this);"><%:Cancel%></button>
 <% end %>
 <% if reboot_enable then %>
-			<button class="firmware-button cbi-button cbi-button-action important" type="button" onclick="return rebootFirmware(this);"><%:Reboot%></button>
+			<button class="firmware-button cbi-button cbi-button-action important" type="button" onclick="return confirmSwitchReboot(true, this);"<% if not can_switch then %> disabled="disabled"<% end %>><%:Trial boot installed firmware%></button>
 <% end %>
 		</div>
 <% if firmware_output and firmware_output ~= "" then %>
@@ -127,10 +137,10 @@ local reboot_enable = firmware_installed and firmware_action == "install"
 			<summary><%:Firmware bank details%></summary>
 			<p><%:Revision%>: <%=esc(version.revision)%> / <%=esc(altversion.revision)%></p>
 			<div id="switch-reboot-original">
-				<button class="firmware-button cbi-button cbi-button-action" type="button" onclick="showSwitchRebootConfirmation();"><%:Switch and Reboot%></button>
+				<button class="firmware-button cbi-button cbi-button-action" type="button" onclick="showSwitchRebootConfirmation();"<% if not can_switch then %> disabled="disabled"<% end %>><%:Trial boot inactive bank%></button>
 			</div>
 			<div id="switch-reboot-confirmation" style="display:none">
-				<p><%:Switch to inactive bank%> <%=esc(altversion.bank)%>?</p>
+				<p><%:Trial boot inactive bank%> <%=esc(altversion.bank)%>? <%:The default bank stays unchanged until you confirm the running firmware.%></p>
 				<button class="firmware-button cbi-button cbi-button-action important" type="button" onclick="confirmSwitchReboot(true, this);"><%:Confirm and Reboot%></button>
 				<button class="firmware-button cbi-button cbi-button-reset" type="button" onclick="confirmSwitchReboot(false, this);"><%:Cancel%></button>
 			</div>

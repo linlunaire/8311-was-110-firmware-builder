@@ -101,6 +101,15 @@ local function setup()
 			return s.call_code or 0
 		end,
 		process = { exec = function(command, output)
+			if command[5] == "/usr/sbin/8311-bank-check.sh" then
+				s.bank_checks = (s.bank_checks or 0) + 1
+				return { code = s.bank_invalid and 1 or 0 }
+			end
+			if command[5] == "/sbin/tc" then
+				s.tc_reads = (s.tc_reads or 0) + 1
+				if output then output(s.tc_text or "") end
+				return { code = s.tc_failure and 1 or 0 }
+			end
 			table.insert(s.processes, command)
 			if command[1] == "/usr/sbin/fw_printenv" then
 				if output then output(s.environment or "") end
@@ -182,6 +191,44 @@ check("HTML escaping handles adjacent special characters and nil", function()
 	assert(tools.html_escape(nil) == "")
 	assert(tools.html_escape(0) == "0")
 	assert(select("#", tools.html_escape("&")) == 1)
+end)
+
+check("link diagnostics preserve counter precision and parse only bounded service rule counters", function()
+	local s, tools = setup()
+	s.files["/sys/class/net/eth0_0/ifindex"] = "10\n"
+	s.files["/sys/class/net/eth0_0/statistics/rx_packets"] = "18446744073709551615\n"
+	s.files["/sys/class/net/eth0_0/statistics/tx_packets"] = "0\n"
+	s.files["/sys/class/net/eth0_0/statistics/rx_errors"] = "nan\n"
+	s.tc_text = [[filter protocol 802.1Q pref 1 flower
+filter protocol 802.1Q pref 1 flower handle 0x1
+  vlan_id 41
+  action order 1: vlan pop pass
+  Sent 100 bytes 5 pkt (dropped 2, overlimits 0 requeues 0)
+  action order 2: gact action pass
+  Sent 100 bytes 99 pkt (dropped 10, overlimits 0 requeues 0)
+filter protocol 802.1ad pref 251 flower handle 0x6f
+  action order 1: gact action pass
+  Sent 100 bytes 12 pkt (dropped 0, overlimits 0 requeues 0)
+]]
+	local links = tools.link_diagnostics()
+	assert(#links == 2 and links[1].available and not links[2].available and s.tc_reads == 2)
+	assert(links[1].counters.rx_packets == "18446744073709551615" and links[1].counters.tx_packets == "0")
+	assert(links[1].counters.rx_errors == nil)
+	assert(#links[1].filters == 2 and links[1].filters[1].vlan_id == "41")
+	assert(links[1].filters[1].packets == "5" and links[1].filters[1].dropped == "2")
+	assert(links[1].filters[1].direction == "ingress" and links[1].filters[2].direction == "egress")
+	s.tc_failure = true
+	assert(tools.link_diagnostics()[1].rules_available == false)
+	s.tc_failure, s.tc_text = false, string.rep("x", 65537)
+	assert(tools.link_diagnostics()[1].rules_available == false)
+end)
+
+check("connection diagnostics are read-only and missing readings stay unavailable", function()
+	local s, _, controller = setup()
+	controller.action_diagnostics()
+	assert(s.json.links and s.json.vlan and s.json.sample_valid == false)
+	assert(s.headers["Cache-Control"] == "no-store" and #s.writes == 0 and not s.rebooted)
+	assert(s.json.links[1].counters.rx_packets == nil)
 end)
 
 check("missing and short EEPROMs produce unavailable readings without exceptions", function()
@@ -474,7 +521,7 @@ end)
 local staged_firmware = "/tmp/8311-web-upgrade/" .. string.rep("a", 32) .. ".tar"
 
 check("firmware GET cannot install, cancel, switch banks or reboot", function()
-	for _, action in ipairs({ "install", "install_reboot", "switch_reboot", "cancel", "reboot" }) do
+	for _, action in ipairs({ "install", "install_reboot", "switch_reboot", "cancel", "reboot", "commit" }) do
 		local s, _, controller = setup()
 		s.method, s.form = "GET", { action = action, firmware_file = "ignored" }
 		s.files[staged_firmware] = "existing firmware"
@@ -582,19 +629,45 @@ check("failed installation preserves evidence and only successful installation c
 	assert(s.processes[2][2] == "--yes" and s.processes[2][3] == "--install" and not s.rebooted)
 end)
 
-check("bank switching requires a known bank and confirmed environment write", function()
+check("bank switching delegates a guarded trial instead of changing the default in LuCI", function()
 	local s, tools, controller = setup()
 	s.form = { action = "switch_reboot", token = "fixture-token" }
 	local writes = 0
-	tools.fw_setenv = function(args) writes = writes + 1; assert(args[2] == "B"); return false end
+	tools.fw_setenv = function() writes = writes + 1; return true end
 	controller.action_firmware()
-	assert(not s.rebooted and writes == 0)
+	assert(not s.rebooted and writes == 0 and #s.processes == 0)
 	s.files["/proc/cmdline"] = "rootfsname=rootfsA"
+	s.process_code = 1
 	controller.action_firmware()
-	assert(not s.rebooted and writes == 1)
-	tools.fw_setenv = function() return true end
+	assert(s.status == 500 and writes == 0 and #s.processes == 1)
+	s.process_code = 0
 	controller.action_firmware()
-	assert(s.rebooted)
+	assert(s.render.firmware_exec.code == 0 and writes == 0)
+	assert(s.processes[2][1] == "/usr/sbin/8311-bankctl.sh" and s.processes[2][2] == "trial" and s.processes[2][3] == "B")
+end)
+
+check("an empty inactive bank cannot be selected even when its environment flag says valid", function()
+	local s, tools, controller = setup()
+	s.files["/proc/cmdline"] = "rootfsname=rootfsA"
+	s.form = { action = "switch_reboot", token = "fixture-token" }
+	local writes = 0
+	tools.bank_available = function() return false end
+	tools.fw_setenv = function() writes = writes + 1; return true end
+	controller.action_firmware()
+	assert(writes == 0 and not s.rebooted and s.status == 500, "empty bank was selected")
+end)
+
+check("web installation keeps the default bank and explicit trial requests carry the trial option", function()
+	for _, action in ipairs({ "install", "install_reboot" }) do
+		local s, _, controller = setup()
+		s.files[staged_firmware] = "firmware"
+		s.files["/proc/cmdline"] = "rootfsname=rootfsA"
+		s.form = { action = action, token = "fixture-token" }
+		controller.action_firmware()
+		local command = table.concat(s.processes[1], " ")
+		assert(command:find("--no-commit", 1, true))
+		assert((command:find("--trial", 1, true) ~= nil) == (action == "install_reboot"))
+	end
 end)
 
 check("support generation and deletion cannot bypass POST and token checks", function()
