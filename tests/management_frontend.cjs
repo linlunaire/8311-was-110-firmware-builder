@@ -88,7 +88,8 @@ const server = http.createServer(async (req, res) => {
     page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(() => {
       window.fixtureHidden = false;
-      Object.defineProperty(document,'hidden',{configurable:true,get:()=>window.fixtureHidden});
+      const hidden = Object.getOwnPropertyDescriptor(Document.prototype,'hidden').get;
+      Object.defineProperty(document,'hidden',{configurable:true,get:()=>window.fixtureHidden || hidden.call(document)});
       const interval = window.setInterval;
       window.setInterval = (fn, ms) => { if (ms === 10000) { window.diagnosticTick = fn; return 1; } return interval(fn, ms); };
     });
@@ -145,8 +146,10 @@ const server = http.createServer(async (req, res) => {
     await page.evaluate(() => { window.diagnosticTick(); window.diagnosticTick(); window.diagnosticTick(); });
     await page.waitForTimeout(100);
     assert.equal(diagnosticRequests,beforeHeld+1);
-    await page.goto(base + '/empty');
     holdDiagnostics = false;
+    heldDiagnostics.shift()();
+    await page.waitForLoadState('networkidle');
+    await page.goto(base + '/empty');
     await page.waitForLoadState('networkidle');
     const switchButton = page.locator('button[onclick*="showSwitchRebootConfirmation"]');
     assert(await switchButton.isDisabled());
@@ -172,6 +175,7 @@ const server = http.createServer(async (req, res) => {
     await page.waitForLoadState('networkidle');
     await page.locator('#diagnostic-links tr').first().waitFor();
     await page.locator('details').evaluateAll(nodes=>nodes.forEach(node=>node.open=true));
+    await page.locator('#diagnostic-rules').filter({hasText:'<img src=x'}).waitFor();
     assert(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
     const output = path.resolve(__dirname,'../.test-tmp/diagnostics-mobile.png');
     fs.mkdirSync(path.dirname(output),{recursive:true});

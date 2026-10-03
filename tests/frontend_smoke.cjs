@@ -1,5 +1,5 @@
 // Optional browser smoke test: local fixture endpoints only, no device access.
-// Requires Playwright and Chromium/Firefox, or BROWSER_CHANNEL=msedge/chrome.
+// Requires Playwright and Chromium/Firefox/WebKit, or BROWSER_CHANNEL=msedge/chrome.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -222,12 +222,12 @@ const server = http.createServer(async (req, res) => {
     await page.waitForLoadState('networkidle');
     const beforeUpload = requests.length;
     await page.evaluate(() => {
-      const file = new File(['fixture'], 'large.tar');
-      Object.defineProperty(file, 'size', { value: 128 * 1024 * 1024 + 1 });
+      const file = new File([new Uint8Array(128 * 1024 * 1024 + 1)], 'large.tar');
       const transfer = new DataTransfer();
       transfer.items.add(file);
       document.getElementById('firmware-file').files = transfer.files;
     });
+    assert.equal(await page.locator('#firmware-file').evaluate(input => input.files[0].size), 128 * 1024 * 1024 + 1);
     await page.locator('button[title="Upload firmware"]').click();
     assert.equal(requests.length, beforeUpload);
     assert.match(await page.locator('#firmware-file').evaluate(input => input.validationMessage), /128 MiB/);
