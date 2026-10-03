@@ -1127,7 +1127,8 @@ function action_recovery()
 	end
 	http.status(status, status == 200 and "OK" or "Recovery failed")
 	if response.download and status == 200 then
-		http.prepare_content("text/plain; charset=utf-8")
+		-- prepare_content keeps the earlier JSON type on legacy LuCI.
+		http.header("Content-Type", "text/plain; charset=utf-8")
 		http.header("Content-Disposition", 'attachment; filename="8311-settings.env"')
 		http.header("X-Content-Type-Options", "nosniff")
 		http.write(response.download)

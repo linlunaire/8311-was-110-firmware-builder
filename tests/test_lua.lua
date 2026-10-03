@@ -81,8 +81,12 @@ local function setup()
 			s.upload_handled = true
 			if s.upload then s.upload(callback) end
 		end,
-		prepare_content = function(value) s.content_type = value end,
-		header = function(key, value) s.headers = s.headers or {}; s.headers[key] = value end,
+		-- Legacy LuCI keeps the first prepared Content-Type until explicitly replaced.
+		prepare_content = function(value) if not s.content_type then s.content_type = value end end,
+		header = function(key, value)
+			s.headers = s.headers or {}; s.headers[key] = value
+			if key:lower() == "content-type" then s.content_type = value end
+		end,
 		status = function(code) s.status = code end,
 		write = function(data) s.text = s.text .. data end,
 		write_json = function(data) s.json = data end,

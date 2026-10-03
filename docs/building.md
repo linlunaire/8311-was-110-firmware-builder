@@ -56,4 +56,4 @@ node tests/status_poll_smoke.cjs
 node tests/frontend_smoke.cjs
 ```
 
-可用 `BROWSER_CHANNEL=msedge` 或 `chrome` 选择已安装的浏览器。CI 在两组 shell 回归通过后构建 basic 固件，具体记录见 [验证记录](validation.md)。
+可用 `BROWSER_CHANNEL=msedge` 或 `chrome` 选择已安装的浏览器，或用 `BROWSER_ENGINE=firefox` 运行 Playwright Firefox。CI 在两组 shell 回归和 Firefox 表单、下载测试通过后构建 basic 固件，具体记录见 [验证记录](validation.md)。

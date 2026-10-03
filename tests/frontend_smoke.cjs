@@ -1,14 +1,15 @@
 // Optional browser smoke test: local fixture endpoints only, no device access.
-// Requires Playwright and its Chromium, or BROWSER_CHANNEL=msedge/chrome.
+// Requires Playwright and Chromium/Firefox, or BROWSER_CHANNEL=msedge/chrome.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
-const { chromium } = require('playwright');
+const { chromium, firefox } = require('playwright');
 
 const assets = path.resolve(__dirname, '../files/basic/www/luci-static/resources');
 const requests = [];
 let status = 200;
+let backupContentType = 'text/plain; charset=utf-8';
 const html = `<!doctype html><meta charset="utf-8">
 <style>[data-tab]:not(li):not([data-tab-active]){display:none}</style>
 <ul><li class="cbi-tab" data-tab="pon">PON</li><li class="cbi-tab-disabled" data-tab="vlans">VLAN</li></ul>
@@ -69,7 +70,7 @@ const server = http.createServer(async (req, res) => {
     for await (const chunk of req) data += chunk;
     requests.push({ url: req.url, values: new URLSearchParams(data), raw: data });
     if (status === 200 && new URLSearchParams(data).get('action') === 'backup') {
-      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.writeHead(200, { 'Content-Type': backupContentType, 'Cache-Control': 'no-store' });
       res.end(backupContents);
       return;
     }
@@ -94,7 +95,8 @@ const server = http.createServer(async (req, res) => {
   let browser;
   try {
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    browser = await chromium.launch({ headless: true, ...(process.env.BROWSER_CHANNEL ? { channel: process.env.BROWSER_CHANNEL } : {}) });
+    const engine = process.env.BROWSER_ENGINE === 'firefox' ? firefox : chromium;
+    browser = await engine.launch({ headless: true, ...(process.env.BROWSER_CHANNEL ? { channel: process.env.BROWSER_CHANNEL } : {}) });
     const page = await browser.newPage();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -255,6 +257,19 @@ const server = http.createServer(async (req, res) => {
     await page.goto(firmwareUrl);
     await page.waitForLoadState('networkidle');
     const backupButton = page.locator('button[onclick*="backupSettings"]');
+    backupContentType = 'application/json';
+    const rejectedDownloads = [];
+    const recordRejectedDownload = download => rejectedDownloads.push(download);
+    page.on('download', recordRejectedDownload);
+    await backupButton.click();
+    const failureMessage = await page.locator('#recovery-form').getAttribute('data-failure');
+    await page.getByText(failureMessage, { exact: true }).waitFor();
+    await page.waitForFunction(() => !document.querySelector('button[onclick*="backupSettings"]').disabled);
+    assert.equal(rejectedDownloads.length, 0);
+    page.off('download', recordRejectedDownload);
+    console.log('ok - a backup mislabeled as JSON is rejected and the download button is released');
+
+    backupContentType = 'text/plain; charset=utf-8';
     const [download] = await Promise.all([page.waitForEvent('download'), backupButton.click()]);
     assert.match(download.suggestedFilename(), /^8311-settings-.*\.env$/);
     const downloaded = fs.readFileSync(await download.path());
