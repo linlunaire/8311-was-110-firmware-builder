@@ -151,16 +151,19 @@ local function counter(value)
 	return value and #value <= 20 and value or nil
 end
 
-function link_diagnostics()
+function link_diagnostics(include_rules)
 	local links = {}
 	for _, device in ipairs({ "eth0_0", "eth0_0_2" }) do
 		local path = "/sys/class/net/" .. device
-		local link = { device = device, counters = {}, filters = {}, rules_available = true,
+		local link = { device = device, counters = {}, filters = {},
 			available = counter(fs.readfile(path .. "/ifindex", 32)) ~= nil }
 		if link.available then
 			for _, key in ipairs({ "rx_packets", "tx_packets", "rx_dropped", "tx_dropped", "rx_errors", "tx_errors" }) do
 				link.counters[key] = counter(fs.readfile(path .. "/statistics/" .. key, 32))
 			end
+		end
+		if link.available and include_rules ~= false then
+			link.rules_available = true
 			for _, direction in ipairs(device == "eth0_0" and { "ingress", "egress" } or { "egress" }) do
 				local chunks, size = {}, 0
 				local result = sys.process.exec({ "/usr/bin/timeout", "-k", "1", "2", "/sbin/tc", "-s", "filter", "show", "dev", device, direction }, function(chunk)

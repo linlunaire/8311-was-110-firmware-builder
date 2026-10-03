@@ -196,23 +196,29 @@ function language_change(value)
 	return sys.call("uci set luci.main.lang=" .. util.shellquote(value ~= "" and value or "auto") .. " && uci commit luci") == 0
 end
 
-function fwenvs_8311()
-	local zones = util.trim(util.exec("grep -v '^#' /usr/share/zoneinfo/zone.tab  | awk '{print $3}' | sort -uV ; echo UTC"))
-	local timezones = {}
-	for zone in zones:gmatch("[^\r\n]+") do
-		table.insert(timezones, zone)
+function fwenvs_8311(with_defaults)
+	-- Backups and restore validation need field constraints, not display defaults.
+	with_defaults = with_defaults ~= false
+	local timezones, seen = {}, { UTC = true }
+	for line in (fs.readfile("/usr/share/zoneinfo/zone.tab") or ""):gmatch("[^\r\n]+") do
+		local zone = not line:match("^#") and line:match("^%S+%s+%S+%s+(%S+)")
+		if zone and not seen[zone] then
+			table.insert(timezones, zone)
+			seen[zone] = true
+		end
 	end
+	table.sort(timezones)
+	table.insert(timezones, "UTC")
 
 	local languages = {{
 		name="auto",
 		value="auto"
 	}}
-	local langs = util.trim(util.exec("uci show luci.languages | pcre2grep -o1 '^luci\.languages\.([^=]+)='"))
-	for lang in langs:gmatch("[^\r\n]+") do
-		table.insert(languages, {
-			name=util.trim(util.exec("uci get luci.languages." .. util.shellquote(lang))),
-			value=lang
-		})
+	local langs = uci:get_all("luci", "languages") or {}
+	for _, lang in ipairs(tools.sorted_keys(langs)) do
+		if lang:sub(1, 1) ~= "." and type(langs[lang]) == "string" then
+			table.insert(languages, { name = langs[lang], value = lang })
+		end
 	end
 
 	local ipv4_regex = "^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$"
@@ -263,14 +269,14 @@ function fwenvs_8311()
 					description=translate("Image specific software version sent in the Software image MEs [7] (up to 14 characters)."),
 					maxlength=14,
 					type="text",
-					default=tools.fw_getenv{"img_versionA"}
+					default=with_defaults and tools.fw_getenv{"img_versionA"} or nil
 				},{
 					id="sw_verB",
 					name=translate("Software Version B"),
 					description=translate("Image specific software version sent in the Software image MEs [7] (up to 14 characters)."),
 					maxlength=14,
 					type="text",
-					default=tools.fw_getenv{"img_versionB"}
+					default=with_defaults and tools.fw_getenv{"img_versionB"} or nil
 				},{
 					id="fw_match_b64",
 					name=translate("Firmware Version Match"),
@@ -387,7 +393,7 @@ function fwenvs_8311()
 					maxlength=17,
 					pattern='^[A-Fa-f0-9]{2}(:[A-Fa-f0-9]{2}){5}$',
 					type="text",
-					default=util.trim(util.exec(". /lib/pon.sh && pon_mac_get host")):upper()
+					default=with_defaults and util.trim(util.exec(". /lib/pon.sh && pon_mac_get host")):upper() or nil
 				},{
 					id="iphost_hostname",
 					name=translate("IP Host Hostname"),
@@ -634,7 +640,7 @@ function fwenvs_8311()
 					maxlength=15,
 					pattern=ipv4_regex,
 					type="text",
-					default=util.trim(util.exec(". /lib/8311.sh && get_8311_ipaddr"))
+					default=with_defaults and util.trim(util.exec(". /lib/8311.sh && get_8311_ipaddr")) or nil
 				},{
 					id="dns_server",
 					name=translate("DNS Server"),
@@ -655,7 +661,7 @@ function fwenvs_8311()
 					maxlength=15,
 					pattern=ipv4_regex,
 					type="text",
-					default=util.trim(util.exec(". /lib/8311.sh && get_8311_default_ping_host"))
+					default=with_defaults and util.trim(util.exec(". /lib/8311.sh && get_8311_default_ping_host")) or nil
 				},{
 					id="lct_mac",
 					name=translate("LCT MAC Address"),
@@ -663,7 +669,7 @@ function fwenvs_8311()
 					maxlength=17,
 					pattern='^[A-Fa-f0-9]{2}(:[A-Fa-f0-9]{2}){5}$',
 					type="text",
-					default=util.trim(util.exec(". /lib/pon.sh && pon_mac_get lct")):upper()
+					default=with_defaults and util.trim(util.exec(". /lib/pon.sh && pon_mac_get lct")):upper() or nil
 				},{
 					id="reverse_arp",
 					name=translate("Reverse ARP Monitoring"),
@@ -806,7 +812,7 @@ end
 
 function action_diagnostics()
 	local result = pon_status_values()
-	result.links = tools.link_diagnostics()
+	result.links = tools.link_diagnostics(formvalue("rules") ~= "0")
 	result.vlan = vlan_status_values()
 	result.vlan_message = result.vlan.message
 	http.header("Cache-Control", "no-store")
@@ -1060,7 +1066,7 @@ local function recover_settings(action, values)
 	end
 	local current = {}
 	for id, value in ("\n" .. raw):gmatch("\n8311_([%w_]+)=([^\r\n]*)") do current[id] = value end
-	local categories = fwenvs_8311()
+	local categories = fwenvs_8311(false)
 	local hook = ""
 	if fs.lstat(recovery_hook_path) then
 		if action == "reset" then hook = "present"

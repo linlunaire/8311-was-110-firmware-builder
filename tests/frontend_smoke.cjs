@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
-const { chromium, firefox } = require('playwright');
+const { chromium, firefox, webkit } = require('playwright');
 
 const assets = path.resolve(__dirname, '../files/basic/www/luci-static/resources');
 const requests = [];
@@ -109,7 +109,8 @@ const server = http.createServer(async (req, res) => {
   let browser;
   try {
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    const engine = process.env.BROWSER_ENGINE === 'firefox' ? firefox : chromium;
+    const engine = { chromium, firefox, webkit }[process.env.BROWSER_ENGINE || 'chromium'];
+    assert(engine, 'Unsupported BROWSER_ENGINE');
     browser = await engine.launch({ headless: true, ...(process.env.BROWSER_CHANNEL ? { channel: process.env.BROWSER_CHANNEL } : {}) });
     const page = await browser.newPage();
     const errors = [];

@@ -33,10 +33,14 @@ jobs:
       - name: Check PON status polling
         run: node tests/status_poll_smoke.cjs
 
-  firefox:
-    name: Firefox backup and form regression
+  browser:
+    name: Browser regression (${{ matrix.engine }})
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [chromium, firefox, webkit]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -45,18 +49,18 @@ jobs:
       - name: Install isolated browser test tools
         run: |
           npm install --prefix "$RUNNER_TEMP/8311-browser-tests" --no-package-lock playwright@1.62.1
-          node "$RUNNER_TEMP/8311-browser-tests/node_modules/playwright/cli.js" install --with-deps firefox
-      - name: Test backup download, restore and firmware forms in Firefox
+          node "$RUNNER_TEMP/8311-browser-tests/node_modules/playwright/cli.js" install --with-deps ${{ matrix.engine }}
+      - name: Test backup download, restore and firmware forms
         env:
           NODE_PATH: ${{ runner.temp }}/8311-browser-tests/node_modules
-          BROWSER_ENGINE: firefox
+          BROWSER_ENGINE: ${{ matrix.engine }}
         run: |
           node tests/frontend_smoke.cjs
           node tests/management_frontend.cjs
 
   firmware:
     name: Build verified basic firmware
-    needs: [test, firefox]
+    needs: [test, browser]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 15

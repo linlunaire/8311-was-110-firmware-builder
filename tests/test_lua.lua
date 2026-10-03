@@ -171,7 +171,8 @@ local function setup()
 			end,
 		}, ["luci.ltn12"] = {},
 		["8311.version"] = { version = "test", revision = "test", variant = "basic" },
-		["luci.model.uci"] = { get = function() return nil end },
+		["luci.model.uci"] = { get = function() return nil end,
+			get_all = function() return s.languages end },
 		["luci.jsonc"] = {},
 		["base64"] = real_base64,
 	}
@@ -191,6 +192,27 @@ check("HTML escaping handles adjacent special characters and nil", function()
 	assert(tools.html_escape(nil) == "")
 	assert(tools.html_escape(0) == "0")
 	assert(select("#", tools.html_escape("&")) == 1)
+end)
+
+check("field validation reads choices directly without resolving display defaults", function()
+	local s, tools, controller = setup()
+	s.languages = { [".type"] = "internal", en = "English", zh_cn = "Chinese", list = {} }
+	s.files["/usr/share/zoneinfo/zone.tab"] = "# comment\nCN\t+3114+12128\tAsia/Shanghai\nUS +404251-0740023 America/New_York\nCN +0 Asia/Shanghai\n"
+	local fields = {}
+	for _, category in ipairs(controller.fwenvs_8311(false)) do
+		for _, item in ipairs(category.items) do fields[item.id] = item end
+	end
+	assert(#s.calls == 0, "validation spawned processes for unused display defaults or option parsing")
+	assert(fields.sw_verA.default == nil and fields.gateway.default == nil)
+	assert(fields.hostname.default == "prx126-sfp-pon")
+	assert(table.concat(fields.timezone.options, ",") == "America/New_York,Asia/Shanghai,UTC")
+	assert(#fields.lang.options == 3 and fields.lang.options[1].value == "auto")
+	assert(fields.lang.options[2].value == "en" and fields.lang.options[2].name == "English")
+	assert(tools.validate_config_value(fields.lang, "zh_cn"))
+	assert(not tools.validate_config_value(fields.lang, ".type"))
+	assert(not tools.validate_config_value(fields.timezone, "Unknown/Zone"))
+	controller.fwenvs_8311()
+	assert(#s.calls == 6, "display defaults should retain their existing lookup behavior")
 end)
 
 check("link diagnostics preserve counter precision and parse only bounded service rule counters", function()
@@ -221,6 +243,20 @@ filter protocol 802.1ad pref 251 flower handle 0x6f
 	assert(tools.link_diagnostics()[1].rules_available == false)
 	s.tc_failure, s.tc_text = false, string.rep("x", 65537)
 	assert(tools.link_diagnostics()[1].rules_available == false)
+end)
+
+check("collapsed rule diagnostics skip TC while interface counters remain current", function()
+	local s, _, controller = setup()
+	s.files["/sys/class/net/eth0_0/ifindex"] = "10\n"
+	s.files["/sys/class/net/eth0_0/statistics/rx_packets"] = "18446744073709551615\n"
+	s.form = { rules = "0" }
+	controller.action_diagnostics()
+	assert((s.tc_reads or 0) == 0, "collapsed rule details still query TC")
+	assert(s.json.links[1].counters.rx_packets == "18446744073709551615")
+	assert(#s.json.links[1].filters == 0 and s.json.links[1].rules_available == nil)
+	s.form.rules = "1"
+	controller.action_diagnostics()
+	assert(s.tc_reads == 2 and s.json.links[1].rules_available)
 end)
 
 check("connection diagnostics are read-only and missing readings stay unavailable", function()
