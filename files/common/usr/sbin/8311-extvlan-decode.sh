@@ -248,10 +248,10 @@ vlan_parse() {
 }
 
 
-ext_vlan_tables=$(mibs 171)
+ext_vlan_tables=$(mibs 171) || exit $?
 if [ -z "$ext_vlan_tables" ]; then
-	echo "No Extended VLAN Tables Detected" >&2
-	exit 1
+	echo "No Extended VLAN Tables Detected"
+	exit 0
 fi
 
 i=0
@@ -266,7 +266,7 @@ for ext_vlan_table in $ext_vlan_tables; do
 	fi
 	[ "$i" -gt 0 ] && echo
 
-	data=$(mibattrdata 171 $ext_vlan_table 6)
+	data=$(mibattrdata 171 $ext_vlan_table 6) || exit $?
 	for vlan_filter in $data; do
 		w=$(echo $vlan_filter | sed -r 's/(.{8})/0x\1 /g')
 		vlan_parse $w

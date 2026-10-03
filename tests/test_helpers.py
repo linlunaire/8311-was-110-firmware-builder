@@ -90,6 +90,71 @@ _set_8311_lct_mac 00:11:22:33:44:55
         self.assertNotEqual(self.run_script(script).returncode, 0)
 
 
+class ExtendedVlanTests(ShellFixture):
+    def setUp(self):
+        super().setUp()
+        library = self.script("files/common/lib/8311-omci-lib.sh")
+        self.library = library
+        decoder = self.script("files/common/usr/sbin/8311-extvlan-decode.sh")
+        self.command("omci_pipe.sh", 'printf "%s\\n" "${ME_LIST:-empty}"; [ "${OMCI_FAIL:-0}" = 0 ] || exit 7')
+        # Model the external matcher's documented statuses: 0 match, 1 none, 2 error.
+        self.command("pcre2grep", '''
+IFS= read -r listing || exit 1
+case "$listing" in empty) exit 1 ;; table) echo 0 ;; *) exit 2 ;; esac
+''')
+        self.runner = self.root / "decode-vlans.sh"
+        self.runner.write_text('''
+_lib_int() { :; }
+_lib_hexbin() { :; }
+. ''' + shlex.quote(shell_path(library)) + '''
+omci="$TEST_BIN/omci_pipe.sh"
+pcre="$TEST_BIN/pcre2grep"
+mibattrdata() {
+    [ "${ATTR_FAIL:-0}" = 0 ] || return 8
+    echo 00000000000000000000000000000000
+}
+. ''' + shlex.quote(shell_path(decoder)) + '\n', newline="\n")
+
+    def test_absent_extended_vlan_tables_are_a_successful_empty_result(self):
+        for args in ((), ("-t",)):
+            with self.subTest(args=args):
+                result = self.run_script(self.runner, *args)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, "No Extended VLAN Tables Detected\n")
+
+    def test_failed_reads_never_become_empty_success_or_partial_tables(self):
+        for failure in ("OMCI_FAIL", "ATTR_FAIL"):
+            with self.subTest(failure=failure):
+                self.env.update(ME_LIST="table", **{failure: "1"})
+                result = self.run_script(self.runner, "-t")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("No Extended VLAN Tables Detected", result.stdout)
+                del self.env[failure]
+
+    def test_present_table_decodes_and_matcher_errors_are_rejected(self):
+        self.env["ME_LIST"] = "table"
+        result = self.run_script(self.runner, "-t")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Extended VLAN table 0\n", result.stdout)
+        self.assertIn("\t".join(["0"] * 15) + "\n", result.stdout)
+        self.env["ME_LIST"] = "parser-error"
+        self.assertNotEqual(self.run_script(self.runner).returncode, 0)
+
+    def test_attribute_helpers_reject_partial_output_from_failed_reads(self):
+        self.command("attribute-parser", "echo '16 TBL'")
+        for operation, upstream in (("mibattr", "mib"), ("mibattrdata", "mibattr")):
+            with self.subTest(operation=operation):
+                self.runner.write_text('''
+_lib_int() { :; }
+_lib_hexbin() { :; }
+. ''' + shlex.quote(shell_path(self.library)) + '\n' + upstream + '''() { echo partial; return 7; }
+pcre="$TEST_BIN/attribute-parser"
+''' + operation + ' 171 0 6\n', newline="\n")
+                result = self.run_script(self.runner)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+
+
 class AlternateInfoTests(ShellFixture):
     def setUp(self):
         super().setUp()

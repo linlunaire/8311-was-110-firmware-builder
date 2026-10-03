@@ -10,12 +10,17 @@ _lib_int &>/dev/null || . /lib/functions/int.sh
 _lib_hexbin &>/dev/null || . /lib/functions/hexbin.sh
 
 mibs() {
+	local data status me
+	data=$("$omci" md) || return $?
 	if [ -n "$1" ]; then
 		me=$(($1))
-		$omci md | $pcre -o1 "^\|\s+${me}\s+\|\s+(\d+)\b"
+		printf '%s\n' "$data" | "$pcre" -o1 "^\|\s+${me}\s+\|\s+(\d+)\b"
 	else
-		$omci md | $pcre -o1 -o2 --om-separator=' ' '^\|\s+(\d+)\s+\|\s+(\d+)\s+'
+		printf '%s\n' "$data" | "$pcre" -o1 -o2 --om-separator=' ' '^\|\s+(\d+)\s+\|\s+(\d+)\s+'
 	fi
+	status=$?
+	# A successful OMCI read can contain no matching instances.
+	[ "$status" -le 1 ] || return "$status"
 }
 
 mib() {
@@ -26,7 +31,8 @@ mib() {
 mibattr() {
 	[ -n "$3" ] || return 1
 	local attr=$(($3)) || return 1
-	local data=$(mib "$1" "$2") || return $?
+	local data
+	data=$(mib "$1" "$2") || return $?
 
 	echo "$data" | $pcre -o1 -M "^(?s)-{79}\n(\s*${attr}\s+.+?)\n-{79}$"
 }
@@ -61,7 +67,8 @@ mibattrdata() {
 		shift
 	done
 
-	local mibattr=$(mibattr "$me" "$id" "$attr") || return $?
+	local mibattr
+	mibattr=$(mibattr "$me" "$id" "$attr") || return $?
 	local typesize=$(echo "$mibattr" | head -n1 | $pcre --om-separator ' ' -o1 -o2 '\b(\d+)b\s+(\S+)\s+\S+$')
 	local bytes=$(echo "$typesize" | cut -d' ' -f1)
 	local type=$(echo "$typesize" | cut -d' ' -f2)
