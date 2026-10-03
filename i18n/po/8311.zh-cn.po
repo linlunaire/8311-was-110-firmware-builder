@@ -656,3 +656,159 @@ msgstr "取消固件升级并清理"
 
 msgid "Reboot to new firmware"
 msgstr "重启至新固件"
+
+msgid "Restore / Flash Firmware"
+msgstr "恢复与更新"
+
+msgid "Restore"
+msgstr "恢复"
+
+msgid "Restore 8311 settings or reset them to the firmware defaults. Factory calibration, bootloader and firmware banks are preserved."
+msgstr "恢复 8311 配置，或将配置重置为固件默认值。原厂校准数据、引导程序和固件分区均会保留。"
+
+msgid "Unable to complete recovery. Check the connection and retry."
+msgstr "无法完成恢复，请检查连接后重试。"
+
+msgid "Choose a non-empty 8311 settings file no larger than 64 KiB."
+msgstr "请选择非空的 8311 配置文件，文件大小不能超过 64 KiB。"
+
+msgid "Reset the known 8311 settings and remove the VLAN hook? After reboot, management will use 192.168.11.1 and the root password will return to the firmware default."
+msgstr "确定重置已知的 8311 配置并移除 VLAN 钩子脚本？重启后，管理地址将变为 192.168.11.1，root 密码将恢复为固件默认值。"
+
+msgid "PON identity and authentication settings will also be replaced or cleared. Continue?"
+msgstr "PON 身份和认证参数也将被替换或清除，可能需要重新配置才能上网。确定继续？"
+
+msgid "Recovery scope"
+msgstr "恢复／重置范围"
+
+msgid "Keep PON identity and authentication (recommended)"
+msgstr "保留 PON 身份和认证参数（推荐）"
+
+msgid "Include PON identity and authentication"
+msgstr "同时恢复／重置 PON 身份和认证参数"
+
+msgid "The first mode keeps the PON serial number, LOID and PLOAM. The second mode also resets or restores all known PON settings."
+msgstr "第一种模式保留 PON 序列号、LOID、PLOAM 等参数；第二种模式也会重置或恢复所有已知的 PON 设置。"
+
+msgid "Reset to defaults"
+msgstr "恢复默认设置"
+
+msgid "Perform reset…"
+msgstr "执行重置…"
+
+msgid "Resets management, VLAN, device and virtual SFP settings. Reboot is a separate step after a successful reset."
+msgstr "重置管理、VLAN、设备及虚拟 SFP 配置。成功后可另行重启，让设置生效。"
+
+msgid "Restore configuration"
+msgstr "恢复配置"
+
+msgid "Upload and check…"
+msgstr "上传并校验…"
+
+msgid "Use an 8311 .env file from this firmware family, such as fwenvs_backup.env. Maximum: 64 KiB. OpenWrt backup archives and CN-specific settings are not supported."
+msgstr "请选择来自本固件系列的 8311 .env 文件，例如 fwenvs_backup.env，上限 64 KiB。不接受通用 OpenWrt 备份包或 CN 分支专用配置。"
+
+msgid "Settings to replace"
+msgstr "将替换的设置"
+
+msgid "Protected PON settings skipped:"
+msgstr "已保留的 PON 设置数量："
+
+msgid "Values and credentials are not displayed. Missing settings stay unchanged."
+msgstr "此处仅列出项目名称，不显示具体值或密码。文件中未包含的设置保持不变。"
+
+msgid "Confirm restore"
+msgstr "确认恢复"
+
+msgid "Reconnect using the restored management address after reboot."
+msgstr "重启后，请使用恢复后的管理地址重新连接。"
+
+msgid "Reboot to apply"
+msgstr "重启使设置生效"
+
+msgid "Flash new firmware image"
+msgstr "更新固件"
+
+msgid "Upload a WAS-110 8311 local-upgrade.tar file. It is checked before installation to the inactive bank. Generic OpenWrt and ImmortalWrt sysupgrade images are not accepted."
+msgstr "请选择 WAS-110 的 8311 local-upgrade.tar 升级包。通过校验后才会写入备用分区。不接受通用 OpenWrt 或 ImmortalWrt sysupgrade 镜像。"
+
+msgid "Bank"
+msgstr "分区"
+
+msgid "Firmware image"
+msgstr "固件文件"
+
+msgid "Choose file…"
+msgstr "选择文件…"
+
+msgid "Maximum size: 128 MiB. Uploading does not flash the firmware; confirm installation after validation."
+msgstr "文件上限 128 MiB。上传只进行校验，通过后还需确认安装。"
+
+msgid "Firmware bank details"
+msgstr "固件分区详情与切换"
+
+msgid "Unable to read the current settings. No changes were made."
+msgstr "无法读取当前配置，尚未进行任何修改。"
+
+msgid "File checked. Only the listed settings will be replaced; missing settings are kept."
+msgstr "文件校验通过。只会替换列出的设置，未包含的设置将保留。"
+
+msgid "Restore stopped at %s. Confirmed writes: %d. Review configuration before retrying; the device was not rebooted."
+msgstr "恢复在“%s”处停止，已确认写入 %d 项。请先检查当前配置再重试；设备没有重启。"
+
+msgid "Settings were reset, but the VLAN hook could not be removed. Review it before rebooting."
+msgstr "配置已重置，但无法移除 VLAN 钩子脚本。请在重启前检查该脚本。"
+
+msgid "Default settings saved. Reboot to apply. The management address will be 192.168.11.1 and the root password will return to the firmware default."
+msgstr "默认配置已保存，重启后生效。管理地址将变为 192.168.11.1，root 密码将恢复为固件默认值。"
+
+msgid "Settings restored. Reboot to apply network and PON changes."
+msgstr "配置已恢复，重启后网络和 PON 设置生效。"
+
+msgid "Another operation is in progress. Retry shortly."
+msgstr "其他操作正在进行，请稍后重试。"
+
+msgid "Recovery failed unexpectedly. Check configuration before retrying; the device was not rebooted."
+msgstr "恢复操作出现错误。请先检查当前配置再重试；设备没有重启。"
+
+msgid "Disable Persist RootFS and reboot before restoring settings."
+msgstr "请先关闭“持久化 RootFS”并重启，再执行恢复或重置。"
+
+msgid "Restoring a persistent RootFS setting is not supported."
+msgstr "不支持通过导入配置启用持久化 RootFS。"
+
+msgid "Invalid Base64 setting."
+msgstr "配置中的 Base64 编码无效。"
+
+msgid "Invalid checkbox value."
+msgstr "开关配置值无效。"
+
+msgid "The settings file must contain plain text key=value lines."
+msgstr "配置文件必须是纯文本，每行格式为 key=value。"
+
+msgid "The file contains an unsupported setting."
+msgstr "文件包含本固件不支持的配置项。"
+
+msgid "The file contains a duplicate setting."
+msgstr "文件包含重复的配置项。"
+
+msgid "The file contains no supported settings."
+msgstr "文件中没有可恢复的配置项。"
+
+msgid "Enter a single-line value."
+msgstr "配置值必须是单行文本。"
+
+msgid "This field is required."
+msgstr "此项不能为空。"
+
+msgid "Value exceeds the maximum length."
+msgstr "配置值超过允许的长度。"
+
+msgid "Enter an integer within the allowed range."
+msgstr "请输入允许范围内的整数。"
+
+msgid "Select one of the available options."
+msgstr "请选择有效的选项。"
+
+msgid "Value does not match the required format."
+msgstr "配置值不符合规定的格式。"

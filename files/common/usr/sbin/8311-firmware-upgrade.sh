@@ -9,7 +9,7 @@ _help() {
 	printf -- 'Usage: %s [options] <firmware upgrade tar file>\n\n' "$0"
 	printf -- 'Options:\n'
 	printf -- '-v|--validate\t\tValidate images from the firmware upgrade tar file.\n'
-	printf -- '-i|--install\t\tInstall images  from the firmware upgrade tar file to the inactive firmware bank.\n'
+	printf -- '-i|--install\t\tValidate and install images to the inactive firmware bank.\n'
 	printf -- '-r|--reboot\t\tReboot after a successful firmware upgrade.\n'
 	printf -- '-y|--yes\t\tAnswer yes to any prompts.\n'
 	printf -- '-h|--help\t\tThis help text.\n\n'
@@ -56,6 +56,7 @@ while [ $# -gt 0 ]; do
 			REBOOT=true
 		;;
 		--)
+			[ $# -eq 2 ] && [ -z "$TAR" ] || { _help; exit 1; }
 			TAR="$2"
 			break
 		;;
@@ -87,11 +88,6 @@ fi
 
 if [ ! -r "$TAR" ]; then
 	_err "Upgrade file '$TAR' not found."
-fi
-
-CONTROL=$(tar x -f "$TAR" -O -- control 2>/dev/null)
-if [ -z "$CONTROL" ]; then
-	_err "Invalid firmware upgrade tar, control file not found."
 fi
 
 control_var() {
@@ -179,11 +175,22 @@ validate_image() {
 	local FILE="$2"
 	local NAME="$3"
 	local SHA256=$(control_var "SHA256_$VAR")
+	local SIZE=$(control_var "SIZE_$VAR")
+	local IMAGE="$WORKDIR/$FILE"
 
-	[ -z "$SHA256" ] && _err "$NAME hash not found in control file."
+	[ "${#SHA256}" -eq 64 ] || _err "$NAME hash missing or invalid in control file."
+	case "$SHA256" in *[!0-9a-fA-F]*) _err "$NAME hash invalid in control file." ;; esac
+	case "$SIZE" in ''|*[!0-9]*) _err "$NAME size missing or invalid in control file." ;; esac
+	[ "$SIZE" -gt 0 ] 2>/dev/null || _err "$NAME size must be greater than zero."
+	SHA256=$(printf '%s' "$SHA256" | tr 'A-F' 'a-f')
 	echo -n "Validating $NAME image..."
-	ACTUAL_SHA256=$(tar x -f "$TAR" -O -- "$FILE" 2>/dev/null | sha256)
+	# Stage only named members, never archive paths. Install the exact bytes checked here.
+	tar x -f "$TAR" -O -- "$FILE" > "$IMAGE" 2>/dev/null || _err "Unable to extract $NAME image."
+	[ "$(wc -c < "$IMAGE")" -eq "$SIZE" ] || _err "$NAME image size does not match control file."
+	local ACTUAL_SHA256=$(sha256 "$IMAGE")
 	[ "$ACTUAL_SHA256" = "$SHA256" ] && echo " OK" || { echo " FAILED";  _err "Image $NAME hash '$ACTUAL_SHA256' does not match expected '$SHA256'."; }
+	# Validation-only runs do not need to retain all three images at once.
+	$INSTALL || rm -f "$IMAGE"
 }
 
 install_image() {
@@ -192,7 +199,7 @@ install_image() {
 	local NAME="$3"
 	local UBI_VOLNAME="$4"
 	
-	local SHA256=$(control_var "SHA256_$VAR")
+	local SHA256=$(control_var "SHA256_$VAR" | tr 'A-F' 'a-f')
 	local SIZE=$(control_var "SIZE_$VAR")
 
 	[ -z "$SHA256" ] && _err "$NAME hash not found in control file."
@@ -204,7 +211,7 @@ install_image() {
 	if [ -z "$UBI" ]; then
 		ubi_create "$UBI_VOLNAME" "$SIZE" "$UBI_VOL"
 		UBI=$(ubi_dev "$UBI_VOLNAME")
-		[ -n "$UBI" ] || _err "Error finding UBI volume '$UBI_VOLUME' after create."
+		[ -n "$UBI" ] || _err "Error finding UBI volume '$UBI_VOLNAME' after create."
 	else
 		UBI_SIZE=$(ubi_size "$UBI_VOLNAME")
 		[ -n "$UBI_SIZE" ] || _err "Invalid UBI volume '$UBI_VOLNAME' while resizing."
@@ -215,43 +222,50 @@ install_image() {
 	
 
 	echo "Installing $NAME image to $UBI_VOLNAME ($UBI)..."
-	tar x -f "$TAR" -O -- "$FILE" 2>/dev/null | ubiupdatevol -s "$SIZE" "$UBI" - || _err "Error installing $NAME to '$UBI'."
+	ubiupdatevol -s "$SIZE" "$UBI" - < "$WORKDIR/$FILE" || _err "Error installing $NAME to '$UBI'."
 	echo -n "Validating installed $NAME image..."
 	ACTUAL_SHA256=$(head -c "$SIZE" "$UBI" | sha256)
 	[ "$ACTUAL_SHA256" = "$SHA256" ] && echo " OK" || { echo " FAILED";  _err "Installed image $NAME hash '$ACTUAL_SHA256' does not match expected '$SHA256'."; }
 }
 
-FW_VERSION=$(control_var FW_VERSION)
-FW_REVISION=$(control_var FW_REVISION)
-FW_VARIANT=$(control_var FW_VARIANT)
+# Keep the lock inode in place; unlinking it permits a second upgrader to lock a
+# different inode. The subshell's exit status must reach CLI and LuCI callers.
+umask 077
+LOCK="/tmp/8311-firmware-upgrade.lock"
+(
+	flock -n 9 || _err "Firmware upgrade already in progress."
+	WORKDIR=$(mktemp -d /tmp/8311-upgrade.XXXXXX) || _err "Cannot create upgrade staging directory."
+	trap 'rm -rf "$WORKDIR"' 0
+	trap 'exit 1' HUP INT TERM
 
-{ [ -n "$FW_VERSION" ] && [ -n "$FW_REVISION" ] && [ "$FW_VARIANT" ]; } || _err "Missing firmware version information."
+	CONTROL=$(tar x -f "$TAR" -O -- control 2>/dev/null) || _err "Invalid firmware upgrade tar, cannot read control file."
+	[ -n "$CONTROL" ] || _err "Invalid firmware upgrade tar, control file not found."
+	FW_VERSION=$(control_var FW_VERSION)
+	FW_REVISION=$(control_var FW_REVISION)
+	FW_VARIANT=$(control_var FW_VARIANT)
+	{ [ -n "$FW_VERSION" ] && [ -n "$FW_REVISION" ] && [ -n "$FW_VARIANT" ]; } || _err "Missing firmware version information."
 
-echo "New Firmware:"
-echo "Version: $FW_VERSION"
-echo "Revision: $FW_REVISION"
-echo "Variant: $FW_VARIANT"
-echo
+	echo "New Firmware:"
+	echo "Version: $FW_VERSION"
+	echo "Revision: $FW_REVISION"
+	echo "Variant: $FW_VARIANT"
+	echo
 
-if $VALIDATE; then
+	# --install always validates every image before any UBI or boot-env write.
 	validate_image "KERNEL" "kernel.bin" "Kernel"
 	validate_image "BOOTCORE" "bootcore.bin" "Bootcore"
 	validate_image "ROOTFS" "rootfs.img" "RootFS"
 	echo
-fi
+	$INSTALL || exit 0
 
-INSTALL_BANK=$(inactive_fwbank)
-echo "Active firmware bank is $(active_fwbank), will install to bank $INSTALL_BANK."
-
-if $INSTALL; then
-	LOCK="/tmp/8311-firmware-upgrade.lock"
-	(
-		flock -n 10 ||  _err "Firmware upgrade already in progress."
+	INSTALL_BANK=$(inactive_fwbank) || _err "Cannot determine the active firmware bank."
+	case "$INSTALL_BANK" in A|B) ;; *) _err "Invalid inactive firmware bank." ;; esac
+	echo "Active firmware bank is $(active_fwbank), will install to bank $INSTALL_BANK."
 
 		echo
 		if ! $YES; then
 			echo -n "Are you sure you want to install this firmware to bank $INSTALL_BANK? (y/N) "
-			_yesno || exit 1
+			_yesno || exit 2
 		fi
 
 		install_image "KERNEL" "kernel.bin" "Kernel" "kernel$INSTALL_BANK"
@@ -275,11 +289,7 @@ if $INSTALL; then
 
 		if $REBOOT; then
 			echo "Rebooting..."
-			( sleep 3 && reboot; ) &
+			( sleep 3 && reboot; ) 9>&- &
 		fi
-
-		rm -f "$LOCK"
-	) 10>"$LOCK"
-fi
-
-exit 0
+) 9>"$LOCK"
+exit $?

@@ -12,13 +12,23 @@ local translate = i18n.translate
 local base64 = require "base64"
 local ltn12 = require "luci.ltn12"
 local fs = require "nixio.fs"
+local nixio = require "nixio"
 local bit = require "nixio.bit"
 local uci = require "luci.model.uci"
 local support_file = "/tmp/support.tar.gz"
-local json = require "luci.jsonc"
 
 local firmwareOutput = ''
 local supportOutput = ''
+
+local function acquire_lock(path)
+	local fd = nixio.open(path, "w", 384)
+	if not fd then return nil, 503 end
+	if not fd:lock("tlock") then
+		fd:close()
+		return nil, 409
+	end
+	return fd
+end
 
 function index()
 	entry({"admin", "8311"}, firstchild(), translate("8311"), 99).dependent=false
@@ -26,18 +36,21 @@ function index()
 	entry({"admin", "8311", "pon_status"}, call("action_pon_status"), translate("PON Status"), 2)
 	entry({"admin", "8311", "pon_explorer"}, call("action_pon_explorer"), translate("PON ME Explorer"), 3)
 	entry({"admin", "8311", "vlans"}, call("action_vlans"), translate("VLAN Tables"), 4)
-	entry({"admin", "8311", "support"}, post_on({ data = true }, "action_support"), translate("Support"), 5)
+	entry({"admin", "8311", "support"}, call("action_support"), translate("Support"), 5)
 
-	entry({"admin", "8311", "save"}, post_on({ data = true }, "action_save"))
+	entry({"admin", "8311", "save"}, post("action_save"))
 	entry({"admin", "8311", "get_hook_script"}, call("action_get_hook_script")).leaf=true
-	entry({"admin", "8311", "save_hook_script"}, call("action_save_hook_script")).leaf=true
+	entry({"admin", "8311", "save_hook_script"}, post("action_save_hook_script")).leaf=true
 	entry({"admin", "8311", "pontop"}, call("action_pontop")).leaf=true
 	entry({"admin", "8311", "pon_dump"}, call("action_pon_dump")).leaf=true
 	entry({"admin", "8311", "gpon_status"}, call("action_gpon_status")).leaf = true
 	entry({"admin", "8311", "vlans", "extvlans"}, call("action_vlan_extvlans"))
 	entry({"admin", "8311", "support", "support.tar.gz"}, call("action_support_download"))
 
-	entry({"admin", "8311", "firmware"}, call("action_firmware"), translate("Firmware"), 6);
+	entry({"admin", "system", "flash"}, call("action_firmware"), translate("Restore / Flash Firmware"), 70).dependent=false
+	entry({"admin", "system", "flash", "recovery"}, call("action_recovery")).leaf=true
+	-- Preserve existing bookmarks while keeping one visible menu entry.
+	entry({"admin", "8311", "firmware"}, call("action_firmware"))
 	entry({"8311", "metrics"}, call("action_metrics"))
 end
 
@@ -177,7 +190,7 @@ function pontop_pages()
 end
 
 function language_change(value)
-	util.exec("uci set luci.main.lang=" .. util.shellquote(value) .. " && uci commit luci")
+	return sys.call("uci set luci.main.lang=" .. util.shellquote(value ~= "" and value or "auto") .. " && uci commit luci") == 0
 end
 
 function fwenvs_8311()
@@ -569,7 +582,7 @@ function fwenvs_8311()
 					name=translate("Date Code"),
 					description=translate("Set the date code presented in the virtual EEPROM (up to 8 characters)."),
 					type="text",
-					pattern="^\\d{6}.{,2}",
+					pattern="^\\d{6}.{0,2}$",
 					maxlength="8",
 				},{
 					id="sfp_vendordata",
@@ -718,53 +731,59 @@ function action_metrics()
 	luci.http.prepare_content("application/json")
 	luci.http.write("{\n")
 
-	for i, metric in pairs(tools.sorted_keys(metrics)) do
+	for i, metric in ipairs(tools.metric_names) do
 		if i > 1 then
 			luci.http.write(",\n")
 		end
 
 		local value = metrics[metric]
-		if type(value) == "number" then
+		if tools.is_finite(value) then
 			local dec = 2
 			if metric == "ploam_state" then
 				dec = 0
 			end
 
 			value = string.format("%." .. dec .. "f", value)
-			if not value:match("%d") then
-				value = json.stringify(value)
-			end
 		else
-			value = json.stringify(value)
+			value = "null"
 		end
 
 		luci.http.write('  "' .. metric .. '": ' .. value)
 	end
-	luci.http.write("\n}\n")
+	luci.http.write(',\n  "sample_valid": ' .. (metrics.sample_valid and "true" or "false") .. "\n}\n")
 end
 
 function temperature(t)
+	if not tools.is_finite(t) then return translate("N/A") end
 	return string.format(translate("%.2f °C (%.1f °F)"), t, (t * 1.8 + 32))
+end
+
+local function measurement(value, format)
+	return tools.is_finite(value) and string.format(translate(format), value) or translate("N/A")
 end
 
 function action_gpon_status()
 	local metrics = tools.metrics()
 
-	local eep50 = fs.readfile("/sys/class/pon_mbox/pon_mbox0/device/eeprom50", 256)
+	local eep50 = fs.readfile("/sys/class/pon_mbox/pon_mbox0/device/eeprom50", 60) or ""
+	local function eeprom_text(first, last)
+		return #eep50 >= last and eep50:sub(first, last):trim() or translate("N/A")
+	end
 
 	local eth_speed = tonumber((fs.readfile("/sys/class/net/eth0_0/speed") or ""):trim())
-	local vendor_name = eep50:sub(21, 36):trim()
-	local vendor_pn = eep50:sub(41, 56):trim()
-	local vendor_rev = eep50:sub(57, 60):trim()
+	local vendor_name = eeprom_text(21, 36)
+	local vendor_pn = eeprom_text(41, 56)
+	local vendor_rev = eeprom_text(57, 60)
 	local pon_mode = uci:get("gpon", "ponip", "pon_mode") or "xgspon"
-	local module_type = util.exec(". /lib/8311.sh && get_8311_module_type"):trim() or "bfw"
-	local active_bank = util.exec(". /lib/8311.sh && active_fwbank"):trim() or "A"
+	local module_type = tools.module_type() or translate("N/A")
+	local active_bank = tools.active_bank() or translate("N/A")
 
 	local rv = {
 		status = pon_state(metrics.ploam_state),
-		power = string.format(translate("%.2f dBm / %.2f dBm / %.2f mA"), metrics.rx_power_dBm, metrics.tx_power_dBm, metrics.tx_bias_mA),
+		power = measurement(metrics.rx_power_dBm, "%.2f dBm") .. " / " .. measurement(metrics.tx_power_dBm, "%.2f dBm") .. " / " .. measurement(metrics.tx_bias_mA, "%.2f mA"),
 		temperature = string.format("%s / %s / %s", temperature(metrics.cpu1_tempC), temperature(metrics.cpu2_tempC), temperature(metrics.optic_tempC)),
-		voltage = string.format(translate("%.2f V"), metrics.module_voltage),
+		voltage = measurement(metrics.module_voltage, "%.2f V"),
+		sample_valid = metrics.sample_valid,
 		pon_mode = pon_mode:upper():gsub("PON$", "-PON"),
 		module_info = string.format("%s %s %s (%s)", vendor_name, vendor_pn, vendor_rev, module_type),
 		eth_speed = (eth_speed and string.format(translate("%s Mbps"), eth_speed) or translate("N/A")),
@@ -779,7 +798,6 @@ function action_vlans()
 end
 
 function action_vlan_extvlans()
-	local vlans_tables = util.exec("/usr/sbin/8311-extvlan-decode.sh")
 	luci.http.prepare_content("text/plain; charset=utf-8")
 
 	if luci.sys.process.exec({"/usr/sbin/8311-extvlan-decode.sh", "-t"}, luci.http.write, luci.http.write).code == 0 then
@@ -795,16 +813,42 @@ function action_get_hook_script()
 end
 
 function action_save_hook_script()
-    local content = luci.http.formvalue('content') or ''
-	if content == '' then
-		fs.remove("/ptconf/8311/vlan_fixes_hook.sh")
-	else
-		fs.writefile("/ptconf/8311/vlan_fixes_hook.sh", content)
-		fs.chmod("/ptconf/8311/vlan_fixes_hook.sh", 755)
+	if http.getenv("REQUEST_METHOD") ~= "POST" then
+		http.status(405, "Method Not Allowed")
+		return
 	end
-    luci.http.status(200, "OK")
-    luci.http.prepare_content("application/json")
-    luci.http.write_json({ success = true })
+	local content = formvalue("content")
+	if type(content) ~= "string" or #content > 65536 or content:find("%z") then
+		http.status(400, "Invalid hook script")
+		http.write_json({ success = false })
+		return
+	end
+	local lock, code = acquire_lock("/tmp/8311-config.lock")
+	if not lock then
+		http.status(code, "Configuration unavailable")
+		http.write_json({ success = false }); return
+	end
+	-- Share the reset lock so a concurrent edit cannot recreate a removed hook.
+	local ok, success = pcall(function()
+		local path = "/ptconf/8311/vlan_fixes_hook.sh"
+		local saved
+		if content == "" then
+			local removed, error_code = fs.remove(path)
+			saved = removed or error_code == 2 -- ENOENT: already absent
+		else
+			local tmp = path .. "." .. nixio.getpid()
+			saved = fs.mkdirr("/ptconf/8311", "rwx------") and
+				fs.writefile(tmp, content) == #content and fs.chmod(tmp, "rw-------") and
+				sys.call("/bin/sh -n " .. util.shellquote(tmp)) == 0 and fs.rename(tmp, path)
+			fs.remove(tmp)
+		end
+		return saved and tools.request_vlan_reload()
+	end)
+	lock:close()
+	success = ok and success
+	http.status(success and 200 or 500, success and "OK" or "Unable to save or apply hook script")
+	http.prepare_content("application/json")
+	http.write_json({ success = not not success })
 end
 
 function action_support_download()
@@ -819,6 +863,7 @@ function populate_8311_fwenvs()
 
 	for catid, cat in pairs(fwenvs) do
 		for itemid, item in pairs(cat.items) do
+			local value
 			if item.base then
 				value = tools.fw_getenv{item.id}
 			else
@@ -843,52 +888,176 @@ function action_config()
 	})
 end
 
-function action_save()
-	local value = nil
-	if http.getenv('REQUEST_METHOD') == 'POST' then
-		local fwenvs = populate_8311_fwenvs()
-
-		for catid, cat in pairs(fwenvs) do
-			for itemid, item in pairs(cat.items) do
-				value = formvalue(item.id) or ''
-				if item.type == 'checkbox' or item.type == 'checkbox_onoff' then
-					if item.value == '' and ((item.default and value == '1') or (not item.default and (value == '0' or value == ''))) then
-						value = ''
-					elseif item.type == 'checkbox_onoff' then
-						if value == '' then
-							value = 'off'
-						else
-							value = 'on'
-						end
-					elseif value == '' then
-						value = '0'
+local function save_config()
+	local changes, errors = {}, {}
+	for _, cat in ipairs(populate_8311_fwenvs()) do
+		for _, item in ipairs(cat.items) do
+			local value = formvalue(item.id) or ""
+			local valid, message = tools.validate_config_value(item, value)
+			if not valid then
+				errors[item.id] = translate(message)
+			else
+				if item.type == "checkbox" or item.type == "checkbox_onoff" then
+					local checked = value == "1"
+					if item.value == "" and checked == not not item.default then
+						value = ""
+					elseif item.type == "checkbox_onoff" then
+						value = checked and "on" or "off"
 					else
-						value = '1'
+						value = checked and "1" or "0"
 					end
-				elseif item.value == '' and item.default and value == item.default then
-					value = ''
+				elseif item.value == "" and item.default and value == item.default then
+					value = ""
 				end
-
 				if item.value ~= value then
-					if item.change then
-						item.change(value)
-					end
-
-					if item.base64 and value ~= '' then
-						value = base64.enc(value)
-					end
-
-					if item.base then
-						tools.fw_setenv{item.id, value}
-					else
-						tools.fw_setenv_8311{item.id, value}
-					end
+					table.insert(changes, { item = item, value = value })
 				end
 			end
 		end
 	end
+	if next(errors) then
+		return { success = false, errors = errors, message = translate("Configuration was not saved. Check the highlighted fields.") }, 400
+	end
+	local reload_vlans = false
+	local saved, saved_names = {}, {}
+	for index, change in ipairs(changes) do
+		local item, value = change.item, change.value
+		local stored = item.base64 and value ~= "" and base64.enc(value) or value
+		local written = tools.fwenv_set(item.id, stored, not item.base, false)
+		if written then
+			table.insert(saved, item.id)
+			table.insert(saved_names, item.name or item.id)
+		end
+		if not written or (item.change and not item.change(value)) then
+			local pending = {}
+			for i = index + 1, #changes do table.insert(pending, changes[i].item.id) end
+			local message = translate("Saving stopped. Reload the page to check the stored settings before retrying.")
+			if #saved_names > 0 then
+				message = message .. " " .. string.format(translate("Confirmed saved: %s."), table.concat(saved_names, ", "))
+			end
+			return { success = false, field = item.id, saved = saved, pending = pending,
+				failed_stage = written and "apply" or "write", vlan_reload = "not_requested",
+				errors = { [item.id] = translate("Unable to save or apply this setting. Check its stored value.") }, message = message }, 500
+		end
+		if item.id == "fix_vlans" or item.id == "internet_vlan" or item.id == "services_vlan" then
+			reload_vlans = true
+		end
+	end
+	if reload_vlans and not tools.request_vlan_reload() then
+		return { success = false, saved = saved, vlan_reload = "failed",
+			message = translate("Configuration was saved, but VLAN reload failed. Reboot to apply it.") }, 500
+	end
+	local message = #changes == 0 and translate("No configuration changes to save.") or
+		(reload_vlans and translate("Configuration saved. VLAN changes are scheduled; reboot to apply other settings.") or
+		translate("Configuration saved. Reboot to apply the changes."))
+	return { success = true, saved = saved, vlan_reload = reload_vlans and "scheduled" or "unchanged", message = message }, 200
+end
 
-	http.redirect(dispatcher.build_url("admin/8311/config"))
+function action_save()
+	http.prepare_content("application/json")
+	if http.getenv("REQUEST_METHOD") ~= "POST" then
+		http.status(405, "Method Not Allowed")
+		http.write_json({ success = false })
+		return
+	end
+	local lock, code = acquire_lock("/tmp/8311-config.lock")
+	if not lock then
+		http.status(code, "Configuration unavailable")
+		http.write_json({ success = false, message = translate("Another save is in progress or configuration is unavailable. Retry shortly.") })
+		return
+	end
+	-- Compute the result before emitting HTTP data: Lua 5.1 cannot yield through pcall.
+	local ok, result, status = pcall(save_config)
+	lock:close()
+	if not ok then
+		result, status = { success = false, message = translate("Saving failed unexpectedly. Reload the page to check the stored settings before retrying.") }, 500
+	end
+	http.status(status, status == 200 and "OK" or "Configuration not fully saved")
+	http.write_json(result)
+end
+
+local function recover_settings(action, values)
+	local recovery = require "8311.recovery"
+	local raw, oversized = "", false
+	local read = sys.process.exec({ "/usr/sbin/fw_printenv" }, function(chunk)
+		if #raw + #chunk > 131072 then oversized = true else raw = raw .. chunk end
+	end)
+	if not read or read.code ~= 0 or oversized then
+		return { success = false, message = translate("Unable to read the current settings. No changes were made.") }, 503
+	end
+	local current = {}
+	for id, value in ("\n" .. raw):gmatch("\n8311_([%w_]+)=([^\r\n]*)") do current[id] = value end
+	local plan, reason, field = recovery.plan(values.content, fwenvs_8311(), current,
+		values.preserve_pon ~= "0", action == "reset")
+	if not plan then
+		return { success = false, field = field, message = translate(reason) }, 400
+	end
+	local names = {}
+	for _, change in ipairs(plan.changes) do table.insert(names, change.name) end
+	if action == "preview" then
+		return { success = true, count = #names, names = names, skipped = plan.skipped,
+			message = #names == 0 and translate("No configuration changes to save.") or
+				translate("File checked. Only the listed settings will be replaced; missing settings are kept.") }, 200
+	end
+	local saved = {}
+	for _, change in ipairs(plan.changes) do
+		if not tools.fwenv_set(change.id, change.value, true, false) then
+			return { success = false, field = change.id, saved = saved,
+				message = string.format(translate("Restore stopped at %s. Confirmed writes: %d. Review configuration before retrying; the device was not rebooted."), change.name, #saved) }, 500
+		end
+		table.insert(saved, change.id)
+	end
+	if action == "reset" then
+		local removed, code = fs.remove("/ptconf/8311/vlan_fixes_hook.sh")
+		if not removed and code ~= 2 then
+			return { success = false, saved = saved,
+				message = translate("Settings were reset, but the VLAN hook could not be removed. Review it before rebooting.") }, 500
+		end
+	end
+	return { success = true, saved = saved, reboot_required = action == "reset" or #saved > 0,
+		message = action == "reset" and
+			translate("Default settings saved. Reboot to apply. The management address will be 192.168.11.1 and the root password will return to the firmware default.") or
+			translate("Settings restored. Reboot to apply network and PON changes.") }, 200
+end
+
+function action_recovery()
+	http.prepare_content("application/json")
+	if http.getenv("REQUEST_METHOD") ~= "POST" then http.status(405, "Method Not Allowed"); return end
+	local length = tonumber(http.getenv("CONTENT_LENGTH"))
+	if not length then http.status(411, "Length Required"); return end
+	-- URL-encoded UTF-8 can use three bytes per input byte, plus token and options.
+	if not tools.is_finite(length) or length < 0 or length > 3 * 65536 + 8192 then
+		http.status(413, "Settings upload too large"); return
+	end
+	if not dispatcher.test_post_security() then return end
+	local values = formvalue()
+	local action = values.action
+	if (action ~= "preview" and action ~= "restore" and action ~= "reset") or
+		(values.preserve_pon ~= nil and values.preserve_pon ~= "0" and values.preserve_pon ~= "1") or
+		(action ~= "preview" and values.confirm ~= "1") then
+		http.status(400, "Invalid recovery action"); return
+	end
+	-- Match the config editor lock and exclude simultaneous WebUI firmware actions.
+	local operation_lock, code = acquire_lock("/tmp/8311-web-upgrade.lock")
+	if not operation_lock then
+		http.status(code, "Firmware operation in progress")
+		http.write_json({ success = false, message = translate("Another operation is in progress. Retry shortly.") }); return
+	end
+	local config_lock
+	config_lock, code = acquire_lock("/tmp/8311-config.lock")
+	if not config_lock then
+		operation_lock:close()
+		http.status(code, "Configuration unavailable")
+		http.write_json({ success = false, message = translate("Another operation is in progress. Retry shortly.") }); return
+	end
+	local ok, response, status = pcall(recover_settings, action, values)
+	config_lock:close()
+	operation_lock:close()
+	if not ok then
+		response, status = { success = false, message = translate("Recovery failed unexpectedly. Check configuration before retrying; the device was not rebooted.") }, 500
+	end
+	http.status(status, status == 200 and "OK" or "Recovery failed")
+	http.write_json(response)
 end
 
 function action_pon_explorer()
@@ -905,116 +1074,177 @@ function action_pon_dump(me_id, instance_id)
 	luci.sys.process.exec(cmd, http.write)
 end
 
-function action_firmware()
-	local version = require "8311.version"
-	local altversion = {
-		variant="unknown",
-		version="unknown",
-		revision="unknown"
-	}
+local firmware_limit = 128 * 1024 * 1024
+local firmware_directory = "/tmp/8311-web-upgrade"
+local firmware_actions = { validate = true, cancel = true, install = true,
+	install_reboot = true, reboot = true, switch_reboot = true }
 
-	version.bank = util.trim(util.exec(". /lib/8311.sh && active_fwbank"))
-	altversion.bank = util.trim(util.exec(". /lib/8311.sh && inactive_fwbank"))
-
-	for k, v in string.gmatch(util.exec("/usr/sbin/alternate_firmware_info"), '([^\n=]+)=([^\n]+)') do
-		if k == "FW_VARIANT" then
-			altversion.variant=v
-		elseif k == "FW_VERSION" then
-			altversion.version=v
-		elseif k == "FW_REVISION" then
-			altversion.revision=v
-		end
+local function receive_firmware(path)
+	if not fs.mkdir(firmware_directory, 448) and
+		(fs.lstat(firmware_directory, "type") ~= "dir" or fs.lstat(firmware_directory, "uid") ~= 0) then
+		return false, "Unable to create the upload directory."
 	end
-
-	
-	local input_field = "firmware_file"
-	local location = "/tmp"
-	local file_name = "8311-local-upgrade.tar"
-	local firmware_file = location .. "/" .. file_name
-	local values = luci.http.formvalue()
-
-	if not file_exists(firmware_file) then
-		local ul = values[input_field]
-	
-		if ul ~= '' and ul ~= nil then
-			setFileHandler(location, input_field, file_name)
+	if not fs.chmod(firmware_directory, "rwx------") then return false, "Unable to protect the upload directory." end
+	local temporary = path .. ".incoming." .. nixio.getpid()
+	local fd = nixio.open(temporary, nixio.open_flags("wronly", "creat", "excl"), 384)
+	if not fd then return false, "Unable to create a temporary upload file." end
+	local size, metadata, complete, failure = 0, nil, false, nil
+	-- Authentication has parsed the multipart body. LuCI replays its temporary
+	-- file here, closes that descriptor, and releases it after the copy.
+	local ok = pcall(http.setfilehandler, function(meta, chunk, eof)
+		if not meta or meta.name ~= "firmware_file" or failure then return end
+		if metadata and metadata ~= meta then
+			failure = "Upload exactly one firmware file."
+			return
 		end
+		metadata = meta
+		if chunk then
+			size = size + #chunk
+			if size > firmware_limit then failure = "Firmware exceeds the 128 MiB limit."; return end
+			local offset = 0
+			while offset < #chunk do
+				local written = fd:write(chunk, offset)
+				if not written or written <= 0 then failure = "Unable to write the uploaded firmware."; return end
+				offset = offset + written
+			end
+		end
+		if eof then complete = true end
+	end)
+	local closed = fd:close()
+	if not ok or not closed or not complete or size == 0 or failure then
+		fs.remove(temporary)
+		return false, failure or "The firmware upload was incomplete."
 	end
+	if not fs.rename(temporary, path) then
+		fs.remove(temporary)
+		return false, "Unable to save the uploaded firmware."
+	end
+	return true
+end
 
-	local firmware_file_exists = file_exists(firmware_file)
-	local firmware_exec = nil
-	action = values["action"] or "validate"
-	local installed = false
-
+local function apply_firmware(action, values, path, bank)
+	local function failed(message)
+		firmwareUpgradeOutput(translate(message))
+		return { code = 1 }
+	end
 	if action == "switch_reboot" then
-		firmwareUpgradeOutput("Switch bank from " .. version.bank .. " to " .. altversion.bank .. "...\nRebooting...")
-		tools.fw_setenv({ "commit_bank", altversion.bank })
+		local other = bank == "A" and "B" or (bank == "B" and "A" or nil)
+		if not other or not tools.fw_setenv({ "commit_bank", other }) then
+			return failed("Unable to set the inactive firmware bank; reboot cancelled.")
+		end
+		firmwareUpgradeOutput(translate("Rebooting…"))
 		sys.reboot()
+		return { code = 0 }
+	elseif action == "reboot" then
+		firmwareUpgradeOutput(translate("Rebooting…"))
+		sys.reboot()
+		return { code = 0 }
+	elseif action == "cancel" then
+		if fs.lstat(path) and not fs.remove(path) then return failed("Unable to remove the uploaded firmware.") end
+		return { code = 0 }
 	end
+	if values.firmware_file ~= nil and values.firmware_file ~= "" then
+		if action ~= "validate" then return failed("Upload and validate the firmware before installing it.") end
+		local received, message = receive_firmware(path)
+		if not received then return failed(message) end
+	end
+	if fs.lstat(path, "type") ~= "reg" then return failed("Upload a firmware file first.") end
+	local command = { "/usr/sbin/8311-firmware-upgrade.sh" }
+	local installing = action == "install" or action == "install_reboot"
+	if installing then
+		table.insert(command, "--yes")
+		table.insert(command, "--install")
+		if action == "install_reboot" then table.insert(command, "--reboot") end
+	else
+		table.insert(command, "--validate")
+	end
+	table.insert(command, path)
+	local result = sys.process.exec(command, firmwareUpgradeOutput, firmwareUpgradeOutput)
+	local installed = installing and result and result.code == 0
+	if installed then
+		fs.remove("/tmp/8311-alt-firmware")
+		fs.remove(path)
+	elseif not installing and (not result or result.code ~= 0) then
+		fs.remove(path)
+	end
+	return result or { code = 1 }, installed
+end
 
-	if firmware_file_exists then
-		local cmd = {}
-
-		if action == "cancel" then
-			os.remove(firmware_file)
-			firmware_file_exists = false
-		elseif action == "install" then
-			cmd = { "/usr/sbin/8311-firmware-upgrade.sh", "--yes", "--install", firmware_file }
-			firmware_exec = luci.sys.process.exec(cmd, firmwareUpgradeOutput, firmwareUpgradeOutput)
-			installed = true
-		elseif action == "install_reboot" then
-			cmd = { "/usr/sbin/8311-firmware-upgrade.sh", "--yes", "--install", "--reboot", firmware_file }	
-			firmware_exec = luci.sys.process.exec(cmd, firmwareUpgradeOutput, firmwareUpgradeOutput)
-			installed = true
-		elseif action == "reboot" then
-			sys.reboot()
-		else
-			-- validate
-			cmd = { "/usr/sbin/8311-firmware-upgrade.sh", "--validate", firmware_file }
-			firmware_exec = luci.sys.process.exec(cmd, firmwareUpgradeOutput, firmwareUpgradeOutput)
+function action_firmware()
+	firmwareOutput = ""
+	local method = http.getenv("REQUEST_METHOD")
+	if method ~= "GET" and method ~= "POST" then http.status(405, "Method Not Allowed"); return end
+	local values, action = {}, "validate"
+	if method == "POST" then
+		-- Bound the body before token verification parses multipart data into RAM.
+		local length = tonumber(http.getenv("CONTENT_LENGTH"))
+		if not length then http.status(411, "Length Required"); return end
+		if not tools.is_finite(length) or length < 0 or length > firmware_limit + 65536 then
+			http.status(413, "Firmware upload too large"); return
+		end
+		if not dispatcher.test_post_security() then return end
+		values = formvalue()
+		action = values.action
+		if type(action) ~= "string" or not firmware_actions[action] then
+			http.status(400, "Invalid firmware action"); return
 		end
 	end
-
-	local alt_firm_file = "/tmp/8311-alt-firmware"
-	if installed and file_exists(alt_firm_file) then
-		os.remove(alt_firm_file)
+	local session = dispatcher.context.authsession
+	if type(session) ~= "string" or #session ~= 32 or not session:match("^%x+$") then
+		http.status(403, "Firmware session unavailable"); return
 	end
-
-	for k, v in string.gmatch(util.exec("/usr/sbin/alternate_firmware_info"), '([^\n=]+)=([^\n]+)') do
-		if k == "FW_VARIANT" then
-			altversion.variant=v
-		elseif k == "FW_VERSION" then
-			altversion.version=v
-		elseif k == "FW_REVISION" then
-			altversion.revision=v
+	local path = firmware_directory .. "/" .. session .. ".tar"
+	local version = require "8311.version"
+	version.bank = tools.active_bank()
+	local result, installed
+	if method == "POST" then
+		local lock, code = acquire_lock("/tmp/8311-web-upgrade.lock")
+		if not lock then http.status(code, "Another firmware operation is in progress"); return end
+		local ok
+		ok, result, installed = pcall(apply_firmware, action, values, path, version.bank)
+		lock:close()
+		if not ok then
+			result, installed = { code = 1 }, false
+			firmwareUpgradeOutput(translate("Firmware operation failed unexpectedly. Check the device before retrying."))
 		end
+		if result.code ~= 0 then http.status(500, "Firmware operation failed") end
 	end
-
+	local altversion = { variant = "unknown", version = "unknown", revision = "unknown",
+		bank = version.bank == "A" and "B" or (version.bank == "B" and "A" or "unknown") }
+	for key, value in string.gmatch(util.exec("/usr/sbin/alternate_firmware_info"), "([^\n=]+)=([^\n]+)") do
+		local field = ({ FW_VARIANT = "variant", FW_VERSION = "version", FW_REVISION = "revision" })[key]
+		if field then altversion[field] = value end
+	end
 	ltemplate.render("8311/firmware", {
-		version=version,
-		altversion=altversion,
-		firmware_file_exists=firmware_file_exists,
-		firmware_exec=firmware_exec,
-		firmware_output=firmwareOutput,
-		firmware_action=action
+		version = version, altversion = altversion, firmware_file_exists = fs.lstat(path, "type") == "reg",
+		firmware_exec = result, firmware_installed = installed, firmware_output = firmwareOutput, firmware_action = action
 	})
 end
 
 function action_support()
-	local values = luci.http.formvalue()
+	supportOutput = ""
+	local method = http.getenv("REQUEST_METHOD")
+	if method ~= "GET" and method ~= "POST" then http.status(405, "Method Not Allowed"); return end
+	if method == "POST" and not dispatcher.test_post_security() then return end
+	local values = method == "POST" and formvalue() or {}
 	local action = values["action"] or ""
+	if method == "POST" and action ~= "generate" and action ~= "delete" then
+		http.status(400, "Invalid support action"); return
+	end
 
 	local support_file_exists = false
 	local support_output = ""
+	local support_exec
 
 	if action == "generate" then
-		cmd = { "/usr/sbin/8311-support.sh" }
-		luci.sys.process.exec(cmd, supportOut, supportOut)
+		local cmd = { "/usr/sbin/8311-support.sh" }
+		if values["include_raw"] == "1" then table.insert(cmd, "--raw") end
+		support_exec = luci.sys.process.exec(cmd, supportOut, supportOut)
 	elseif action == "delete" then
-		os.remove(support_file)
+		fs.remove(support_file)
 	end
 
-	support_file_exists = file_exists(support_file)
+	support_file_exists = file_exists(support_file) and (not support_exec or support_exec.code == 0)
 
 	ltemplate.render("8311/support", {
 		support_exec=support_exec,
@@ -1035,40 +1265,10 @@ end
 
 function firmwareUpgradeOutput(data)
 	data = data or ''
-	firmwareOutput = firmwareOutput .. data
+	firmwareOutput = firmwareOutput .. data:sub(1, math.max(0, 131072 - #firmwareOutput))
 end
 
 function supportOut(data)
 	data = data or ''
 	supportOutput = supportOutput .. data
-end
-
---location: (string) The full path to where the file should be saved.
---input_name: (string) The name specified by the input html field.  <input type="submit" name="input_name_here" value="whatever you want"/>
---file_name: (string, optional) The optional name you would like the file to be saved as. If left blank the file keeps its uploaded name.
-function setFileHandler(location, input_name, file_name)
-	local fp
-
-	luci.http.setfilehandler(
-		function(meta, chunk, eof)
-			if not fp then
-				-- make sure the field name is the one we want
-				if meta and meta.name == input_name then
-					-- use the file name if specified
-					file_name = file_name or meta.file
-
-					fp = io.open(location .. "/" .. file_name, "w")
-				end
-			end
-
-			-- actually write the uploaded file
-			if chunk then
-				fp:write(chunk)
-			end
-
-			if eof then
-				fp:close()
-			end
-		end
-	)
 end

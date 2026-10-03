@@ -1,133 +1,126 @@
 <%
-local tools = require "8311.tools"
-local esc = tools.html_escape
-
-local action = "validate"
-local upload_enable = true
-local install_enable = false
-local cancel_enable = false
-local reboot_enable = false
-local i18n = require "luci.i18n"
-local translate = i18n.translate
+local esc = require("8311.tools").html_escape
+local translate = require("luci.i18n").translate
+local failed = firmware_exec and firmware_exec.code ~= 0
+local rebooting = not failed and (firmware_action == "reboot" or firmware_action == "switch_reboot" or firmware_action == "install_reboot")
+local upload_enable = not firmware_file_exists and not firmware_installed and not rebooting
+local install_enable = firmware_file_exists and not failed and firmware_action == "validate"
+local cancel_enable = firmware_file_exists and not rebooting
+local reboot_enable = firmware_installed and firmware_action == "install"
 -%>
-
 <%+header%>
 <link rel="stylesheet" href="<%=resource%>/view/8311.css" />
-<script type="text/javascript" src="<%=resource%>/jquery-3.7.1.min.js"></script>
-<script type="text/javascript" src="<%=resource%>/jquery.validate.min.js"></script>
-<script type="text/javascript" src="<%=resource%>/view/8311.js"></script>
+<script src="<%=resource%>/jquery-3.7.1.min.js"></script>
+<script src="<%=resource%>/jquery.validate.min.js"></script>
+<script src="<%=resource%>/view/8311.js"></script>
 
-<h2 name="content"><%:Firmware%></h2>
-<br />
-
-<div class="cbi-section fade-in" style="">
-	<h3><%:Active Firmware%> (<%= esc(version.bank) %>)</h3>
-	<div>
-		<div class="table">
-			<div class="tr">
-				<div class="td left" width="33%"><%:Version%></div>
-				<div class="td left"><%= esc(version.version) %></div>
-			</div>
-			<div class="tr">
-				<div class="td left"><%:Revision%></div>
-				<div class="td left"><%= esc(version.revision) %></div>
-			</div>
-			<div class="tr">
-				<div class="td left"><%:Variant%></div>
-				<div class="td left"><%= esc(version.variant) %></div>
+<h2 name="content"><%:Restore / Flash Firmware%></h2>
+<div id="8311-recovery-page">
+<div class="cbi-section">
+	<h3><%:Restore%></h3>
+	<p class="cbi-section-descr"><%:Restore 8311 settings or reset them to the firmware defaults. Factory calibration, bootloader and firmware banks are preserved.%></p>
+	<form id="recovery-form" action="<%=url('admin', 'system', 'flash', 'recovery')%>" method="post"
+		data-failure="<%=esc(translate('Unable to complete recovery. Check the connection and retry.'))%>"
+		data-file-error="<%=esc(translate('Choose a non-empty 8311 settings file no larger than 64 KiB.'))%>"
+		data-reset-confirm="<%=esc(translate('Reset the known 8311 settings and remove the VLAN hook? After reboot, management will use 192.168.11.1 and the root password will return to the firmware default.'))%>"
+		data-pon-confirm="<%=esc(translate('PON identity and authentication settings will also be replaced or cleared. Continue?'))%>">
+		<input type="hidden" name="token" value="<%=token%>" />
+		<div class="cbi-value">
+			<label class="cbi-value-title" for="recovery-preserve"><%:Recovery scope%></label>
+			<div class="cbi-value-field">
+				<select id="recovery-preserve" onchange="cancelRecoveryPreview();">
+					<option value="1" selected="selected"><%:Keep PON identity and authentication (recommended)%></option>
+					<option value="0"><%:Include PON identity and authentication%></option>
+				</select>
+				<div class="cbi-value-description"><%:The first mode keeps the PON serial number, LOID and PLOAM. The second mode also resets or restores all known PON settings.%></div>
 			</div>
 		</div>
-	</div>
+		<div class="cbi-value">
+			<label class="cbi-value-title"><%:Reset to defaults%></label>
+			<div class="cbi-value-field">
+				<button type="button" class="cbi-button cbi-button-negative recovery-button" onclick="return resetSettings(this);"><%:Perform reset…%></button>
+				<div class="cbi-value-description"><%:Resets management, VLAN, device and virtual SFP settings. Reboot is a separate step after a successful reset.%></div>
+			</div>
+		</div>
+		<div class="cbi-value">
+			<label class="cbi-value-title" for="recovery-file"><%:Restore configuration%></label>
+			<div class="cbi-value-field">
+				<input id="recovery-file" type="file" accept=".env,text/plain" onchange="cancelRecoveryPreview();" />
+				<button type="button" class="cbi-button cbi-button-action recovery-button" onclick="return previewRecovery(this);"><%:Upload and check…%></button>
+				<div class="cbi-value-description"><%:Use an 8311 .env file from this firmware family, such as fwenvs_backup.env. Maximum: 64 KiB. OpenWrt backup archives and CN-specific settings are not supported.%></div>
+			</div>
+		</div>
+		<div id="recovery-preview" class="recovery-feedback" hidden>
+			<h4><%:Settings to replace%></h4>
+			<ul id="recovery-fields"></ul>
+			<p><%:Protected PON settings skipped:%> <span id="recovery-skipped"></span></p>
+			<p><%:Values and credentials are not displayed. Missing settings stay unchanged.%></p>
+			<button id="recovery-apply" type="button" class="cbi-button cbi-button-action important recovery-button" onclick="return applyRecovery(this);"><%:Confirm restore%></button>
+			<button type="button" class="cbi-button cbi-button-reset recovery-button" onclick="cancelRecoveryPreview();"><%:Cancel%></button>
+		</div>
+		<p id="recovery-message" class="recovery-feedback" role="status" aria-live="polite" hidden></p>
+		<div id="recovery-reboot" class="recovery-feedback" hidden>
+			<p><%:Reconnect using the restored management address after reboot.%></p>
+			<button type="button" class="cbi-button cbi-button-action recovery-button" onclick="return rebootFirmware(this);"><%:Reboot to apply%></button>
+		</div>
+	</form>
 </div>
 
-<div class="cbi-section fade-in" style="">
-	<h3><%:Inactive Firmware%> (<%= esc(altversion.bank) %>)</h3>
-	<div>
-		<div class="table">
-			<div class="tr">
-				<div class="td left" width="33%"><%:Version%></div>
-				<div class="td left"><%= esc(altversion.version) %></div>
-			</div>
-			<div class="tr">
-				<div class="td left"><%:Revision%></div>
-				<div class="td left"><%= esc(altversion.revision) %></div>
-			</div>
-			<div class="tr">
-				<div class="td left"><%:Variant%></div>
-				<div class="td left"><%= esc(altversion.variant) %></div>
-			</div>
+<div class="cbi-section">
+	<h3><%:Flash new firmware image%></h3>
+	<p class="cbi-section-descr"><%:Upload a WAS-110 8311 local-upgrade.tar file. It is checked before installation to the inactive bank. Generic OpenWrt and ImmortalWrt sysupgrade images are not accepted.%></p>
+	<form id="firmware-form" method="post" action="<%=url('admin', 'system', 'flash')%>" enctype="multipart/form-data">
+		<input type="hidden" name="token" value="<%=token%>" />
+		<input id="firmware-action" type="hidden" name="action" value="validate" />
+		<div class="cbi-value">
+			<label class="cbi-value-title"><%:Active Firmware%></label>
+			<div class="cbi-value-field firmware-version"><%=esc(version.version)%> · <%=esc(version.variant)%> · <%:Bank%> <%=esc(version.bank)%></div>
 		</div>
-	</div>
-	<% if not install_enable and not firmware_file_exists and firmware_action ~="switch_reboot" then %>
-	<div class="cbi-value" id="switch-reboot-section">
-		<div id="switch-reboot-original" style="display: flex; align-items: center;">
-			<button class="cbi-button cbi-button-action" type="button" onclick="showSwitchRebootConfirmation();" style="margin-left: 10px;"><%:Switch and Reboot%></button>
-		</div>
-		<div id="switch-reboot-confirmation" style="display:none; align-items: center;">
-			<span><%:Switch to inactive bank %><%= esc(altversion.bank) %>?</span>
-			<button class="cbi-button cbi-button-action important" type="button" onclick="confirmSwitchReboot(true, this);" style="margin-left: 10px;"><%:Confirm and Reboot%></button>
-			<button class="cbi-button cbi-button-reset" type="button" onclick="confirmSwitchReboot(false, this);" style="margin-left: 5px;"><%:Cancel%></button>
-		</div>
-	</div>
-	<% end %>
-</div>
-<% if firmware_action ~="switch_reboot" then %>
-<div class="cbi-section fade-in">
-	<h3><%:Firmware Upgrade%></h3>
-
-	<form id="firmware-form" method="post" action="<%=REQUEST_URI%>" enctype="multipart/form-data">
-		<div id="zone-content-wrapper">
-			<div id="zone-content">
-<% if not firmware_file_exists then %>
-				<div class="cbi-value">
-					<button type="button" class="firmware-button cbi-button cbi-button-neutral important" onclick="$('#firmware-file').click();">Browse</button>
-					<input type="file" name="firmware_file" id="firmware-file" required="required" />
-					<div class="upload-description">
-						<%:Upload firmware file here, typically named local-upgrade.tar%>
-					</div>
-				</div>
-<% end %>
-<% if firmware_file_exists then
-	cancel_enable = true
-	upload_enable = false
-
-	if firmware_exec and firmware_exec.code ~= 0 then
-		action = "cancel"
-	else
-		if firmware_action == "validate" then
-			install_enable = true
-		elseif firmware_action == "install" then
-			reboot_enable = true
-		elseif firmware_action == "install_reboot" then
-			cancel_enable = false
-		elseif firmware_action == "reboot" then
-			cancel_enable = false
-			firmware_output = translate("Rebooting…")
-		end
-	end
-%>
-<% end %>
-			</div>
+		<div class="cbi-value">
+			<label class="cbi-value-title"><%:Inactive Firmware%></label>
+			<div class="cbi-value-field firmware-version"><%=esc(altversion.version)%> · <%=esc(altversion.variant)%> · <%:Bank%> <%=esc(altversion.bank)%></div>
 		</div>
 <% if upload_enable then %>
-		<button class="firmware-button cbi-button cbi-button-action" title="<%:Upload firmware%>" onclick="return uploadFirmware(this);"><%:Upload%></button>
+		<div class="cbi-value">
+			<label class="cbi-value-title" for="firmware-file"><%:Firmware image%></label>
+			<div class="cbi-value-field">
+				<button type="button" class="firmware-button cbi-button cbi-button-neutral" onclick="$('#firmware-file').click();"><%:Choose file…%></button>
+				<input type="file" name="firmware_file" id="firmware-file" accept=".tar,application/x-tar" required="required" />
+				<button class="firmware-button cbi-button cbi-button-action" type="button" title="<%:Upload firmware%>" onclick="return uploadFirmware(this);"><%:Upload and check…%></button>
+				<div class="cbi-value-description"><%:Maximum size: 128 MiB. Uploading does not flash the firmware; confirm installation after validation.%></div>
+			</div>
+		</div>
 <% end %>
+		<div class="firmware-actions">
 <% if install_enable then %>
-		<button class="firmware-button cbi-button cbi-button-action important" type="button" title="<%:Install firmware%>" onclick="return installFirmware(this, false);"><%:Install%></button>
-		<button class="firmware-button cbi-button cbi-button-action important" type="button" title="<%:Install firmware and reboot%>" onclick="return installFirmware(this, true);"><%:Install and Reboot%></button>
+			<button class="firmware-button cbi-button cbi-button-action important" type="button" onclick="return installFirmware(this, false);"><%:Install%></button>
+			<button class="firmware-button cbi-button cbi-button-action important" type="button" onclick="return installFirmware(this, true);"><%:Install and Reboot%></button>
 <% end %>
 <% if cancel_enable then %>
-		<button class="firmware-button cbi-button cbi-button-reset" type="button" title="<%:Cancel firmware upgrade and cleanup%>" onclick="return cancelFirmware(this);"><%:Cancel%></button>
+			<button class="firmware-button cbi-button cbi-button-reset" type="button" onclick="return cancelFirmware(this);"><%:Cancel%></button>
 <% end %>
 <% if reboot_enable then %>
-		<button class="firmware-button cbi-button cbi-button-action important" type="button" title="<%:Reboot to new firmware%>" onclick="return rebootFirmware(this);"><%:Reboot%></button>
+			<button class="firmware-button cbi-button cbi-button-action important" type="button" onclick="return rebootFirmware(this);"><%:Reboot%></button>
 <% end %>
-		<input id="firmware-action" type="hidden" name="action" value="<%= action %>" />
+		</div>
+<% if firmware_output and firmware_output ~= "" then %>
+		<pre id="firmware_output" role="status"><%=esc(firmware_output)%></pre>
+<% end %>
+<% if not firmware_file_exists and not rebooting then %>
+		<details id="switch-reboot-section">
+			<summary><%:Firmware bank details%></summary>
+			<p><%:Revision%>: <%=esc(version.revision)%> / <%=esc(altversion.revision)%></p>
+			<div id="switch-reboot-original">
+				<button class="firmware-button cbi-button cbi-button-action" type="button" onclick="showSwitchRebootConfirmation();"><%:Switch and Reboot%></button>
+			</div>
+			<div id="switch-reboot-confirmation" style="display:none">
+				<p><%:Switch to inactive bank%> <%=esc(altversion.bank)%>?</p>
+				<button class="firmware-button cbi-button cbi-button-action important" type="button" onclick="confirmSwitchReboot(true, this);"><%:Confirm and Reboot%></button>
+				<button class="firmware-button cbi-button cbi-button-reset" type="button" onclick="confirmSwitchReboot(false, this);"><%:Cancel%></button>
+			</div>
+		</details>
+<% end %>
 	</form>
-<% end %>
-<% if firmware_output and firmware_output ~="" then %>
-	<pre id="firmware_output" style="font-size:10pt; font-family: monospace;"><%= esc(firmware_output) %></pre>
-<% end %>
 </div>
-
+</div>
 <%+footer%>

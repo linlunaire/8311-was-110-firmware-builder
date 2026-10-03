@@ -173,8 +173,7 @@ get_8311_reg_id_hex() {
 
 
 set_8311_reg_id_hex() {
-	local printable=$(echo -n "$1" | hex2printable)
-	echo "Setting PON registration ID to: $(echo $(echo "$1" | awk '{gsub(/.{2}/,"0x& ")}1')) ($printable)" | to_console
+	echo "Setting PON registration ID" | to_console
 	_set_8311_reg_id_hex "$1"
 }
 
@@ -359,7 +358,7 @@ get_8311_lpwd() {
 }
 
 set_8311_lpwd() {
-	echo "Setting PON Logical Password to: $1" | to_console
+	echo "Setting PON Logical Password" | to_console
 	uci -q set "omci.default.lpwd"="$1"
 	uci -q commit "omci"
 }
@@ -378,7 +377,7 @@ get_8311_root_pwhash() {
 }
 
 set_8311_root_pwhash() {
-	echo "Setting root password hash: $1" | to_console
+	echo "Setting root password hash" | to_console
 	HASH=$(echo "$1" | sed 's#/#\\/#g')
 	sed -r "s/(root:)([^:]*)(:.+)/\1${HASH}\3/g" -i /etc/shadow
 }

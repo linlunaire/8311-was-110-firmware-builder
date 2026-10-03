@@ -1,10 +1,19 @@
 #!/bin/bash
+_err() {
+	echo "$1" >&2
+	exit "${2:-1}"
+}
+
+_require_value() {
+	[ $# -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || _err "Option '$1' requires a value."
+}
+
 _help() {
 	printf -- 'Tool for building new modded WAS-110 firmware images\n\n'
 	printf -- 'Usage: %s [options]\n\n' "$0"
 	printf -- 'Options:\n'
-	printf -- '-i --image <filename>\t\tSpecify stock local upgrade image file of BFW firmware.\n'
-	printf -- '-I --image-dir <dir>\t\tSpecify stock image directory of the basic firmware (must contain bootcore.bin, kernel.bin, and rootfs.img).\n'
+	printf -- '-i --bfw-image-file <filename>\tSpecify stock local upgrade image file of BFW firmware (--image is an alias).\n'
+	printf -- '-I --basic-image-dir <dir>\tSpecify stock image directory of the basic firmware (--image-dir is an alias; must contain bootcore.bin, kernel.bin, and rootfs.img).\n'
 	printf -- '-o --image-out <filename>\tSpecify local upgrade image file to output.\n'
 	printf -- '-O --tar-out <filename>\t\tSpecify local upgrade tar file to output.\n'
 	printf -- '-V --image-version <version>\tSpecify custom image version string.\n'
@@ -36,27 +45,33 @@ RELEASE=false
 
 while [ $# -gt 0 ]; do
 	case "$1" in
-		-i|--bfw-image-file)
+		-i|--bfw-image-file|--image)
+			_require_value "$@"
 			IMGFILE="$2"
 			shift
 		;;
-		-I|--basic-image-dir)
+		-I|--basic-image-dir|--image-dir)
+			_require_value "$@"
 			IMGDIR="$2"
 			shift
 		;;
 		-o|--image-out)
+			_require_value "$@"
 			IMG_OUT="$2"
 			shift
 		;;
-		-o|--tar-out)
+		-O|--tar-out)
+			_require_value "$@"
 			TAR_OUT="$2"
 			shift
 		;;
 		-V|--image-version)
+			_require_value "$@"
 			FW_VER="$2"
 			shift
 		;;
 		-r|--image-revision)
+			_require_value "$@"
 			FW_REV="$2"
 			shift
 		;;
@@ -93,11 +108,6 @@ while [ $# -gt 0 ]; do
 	shift
 done
 
-_err() {
-	echo "$1" >&2
-	exit ${2:-1}
-}
-
 sha256() {
 	{ [ -n "$1" ] &&  sha256sum "$1" || sha256sum; } | awk '{print $1}'
 }
@@ -116,13 +126,20 @@ expected_hash() {
 }
 
 
+# Resolve caller-relative inputs and outputs before entering the repository.
+[ -z "$IMGFILE" ] || IMGFILE=$(realpath -m -- "$IMGFILE")
+[ -z "$IMGDIR" ] || IMGDIR=$(realpath -m -- "$IMGDIR")
+[ -z "$IMG_OUT" ] || IMG_OUT=$(realpath -m -- "$IMG_OUT")
+[ -z "$TAR_OUT" ] || TAR_OUT=$(realpath -m -- "$TAR_OUT")
+cd "$BASE_DIR" || _err "Cannot enter builder directory '$BASE_DIR'."
+
 GIT_HASH=$(git rev-parse --short HEAD)
 GIT_DIFF="$(git diff HEAD)"
 GIT_TAG=$(git tag --points-at HEAD | grep -P '^v\d+\.\d+\.\d+' | tr '-' '~' | sort -V -r | tr '~' '-' | head -n1)
 GIT_EPOCH=$(git log -1 --format="%at")
 GIT_EPOCH=${GIT_EPOCH:-$(date '+%s')}
 
-FW_FW_SUFFIX=""
+FW_SUFFIX=""
 FW_VER="${FW_VER:-${GIT_TAG:-""}}"
 [ -n "$GIT_DIFF" ] && FW_SUFFIX="~$(echo "$GIT_DIFF" | sha256 | head -c 7)"
 [ -n "$FW_VER" ] && FW_VERSION="${FW_VER}${FW_SUFFIX}" || { FW_VER="dev"; FW_VERSION="dev"; }
@@ -145,7 +162,21 @@ if [ -n "$IMGDIR" ] && [ -d "$IMGDIR" ]; then
 	IMG_DIR=$(realpath "$IMGDIR")
 	[ -d "$IMG_DIR" ] || _err "Image directory '$IMG_DIR' does not exist."
 else
-	_err "Muat specify --basic-image-dir"
+	_err "Must specify --basic-image-dir"
+fi
+
+# Fail before deleting an earlier build when required inputs or tools are absent.
+for FILE in bootcore.bin kernel.bin rootfs.img; do
+	[ -f "$IMG_DIR/$FILE" ] || _err "Basic image file '$IMG_DIR/$FILE' does not exist."
+done
+for FILE in 8311-detect-config.sh 8311-fix-vlans.sh 8311-vlans-lib.sh; do
+	[ -f "$BASE_DIR/8311-xgspon-bypass/$FILE" ] || _err "Missing submodule file '$FILE'; run git submodule update --init."
+done
+for TOOL in sudo unsquashfs mksquashfs mkimage ubinize; do
+	command -v "$TOOL" >/dev/null 2>&1 || _err "Required build tool '$TOOL' not found."
+done
+if $RELEASE; then
+	command -v 7z >/dev/null 2>&1 || _err "Required release tool '7z' not found."
 fi
 
 rm -rfv "$OUT_DIR"
@@ -188,8 +219,8 @@ ROOT_DIR="${ROOT_BASE}-${FW_VARIANT}"
 
 rm -rfv "$ROOT_BASE" "$ROOT_BFW" "$ROOT_BASIC"
 
-sudo unsquashfs -d "$ROOT_BFW" "$ROOTFS_BFW" || _err "Error unsquashifying bfw RootFS image '$ORIG_ROOTFS'"
-sudo unsquashfs -d "$ROOT_BASIC" "$ROOTFS_BASIC" || _err "Error unsquashifying basic RootFS image '$ORIG_ROOTFS'"
+sudo unsquashfs -d "$ROOT_BFW" "$ROOTFS_BFW" || _err "Error unsquashifying bfw RootFS image '$ROOTFS_BFW'"
+sudo unsquashfs -d "$ROOT_BASIC" "$ROOTFS_BASIC" || _err "Error unsquashifying basic RootFS image '$ROOTFS_BASIC'"
 
 ln -s "rootfs-${FW_VARIANT}" "$ROOT_BASE"
 

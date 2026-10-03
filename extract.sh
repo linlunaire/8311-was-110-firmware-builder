@@ -68,27 +68,49 @@ set -e
 [ "$(head -c 16 "$LOCAL")" = '~@$^*)+ATOS!#%&(' ] || _err "Invalid magic string"
 
 LEN_HDR=$((0xD00))
+IMAGE_SIZE=$(stat -c "%s" "$LOCAL")
+[ "$IMAGE_SIZE" -ge "$LEN_HDR" ] || _err "Truncated image header."
+
+FILE_OFFSET=$((0x100))
+
+read_image_details() {
+	IMAGE="$1"
+
+	DETAIL_OFFSET=$((FILE_OFFSET + (NUM + 1) * 48))
+	FILE=$(head -c $((DETAIL_OFFSET - 16)) "$LOCAL" | tail -c 32 | awk -F'\0+' '{print $1}')
+	if ! [ "$FILE" = "$IMAGE" ]; then
+		echo "Image '$IMAGE' expected as image #$NUM" >&2
+		exit 1
+	fi
+
+	LEN=$(head -c "$DETAIL_OFFSET" "$LOCAL" | tail -c 16 | awk -F'\0+' '{print $1}')
+	case "$LEN" in ''|*[!0-9]*) _err "Invalid length for image '$IMAGE'." ;; esac
+	# Decimal fields must not become shell expressions or octal numbers.
+	LEN=$(printf '%s' "$LEN" | sed 's/^0*//')
+	[ -n "$LEN" ] || _err "Empty image '$IMAGE'."
+	REMAINING=$((IMAGE_SIZE - POS))
+	# Compare digit counts first, before a malicious field can overflow arithmetic.
+	[ "${#LEN}" -le "${#REMAINING}" ] && [ "$LEN" -le "$REMAINING" ] ||
+		_err "Image '$IMAGE' extends beyond the input file."
+	POS=$((POS + LEN))
+}
+
+# Check the complete table before replacing any existing output component.
+POS=$LEN_HDR
+NUM=0
+for IMAGE in bootcore.bin kernel.bin rootfs.img; do
+	read_image_details "$IMAGE"
+	NUM=$((NUM + 1))
+done
 
 echo "Extracting image header to '$HEADER' ($LEN_HDR bytes)"
 head -c "$LEN_HDR" "$LOCAL" > "$HEADER"
 
 POS=$LEN_HDR
 NUM=0
-FILE_OFFSET=$((0x100))
-
 extract_image() {
-	IMAGE="$1"
 	OUT="${2:-$1}"
-
-	DETAIL_OFFSET=$((FILE_OFFSET + (NUM + 1) * 48))
-	FILE=$(head -c $((DETAIL_OFFSET - 16)) "$HEADER" | tail -c 32 | awk -F'\0+' '{print $1}')
-	if ! [ "$FILE" = "$IMAGE" ]; then
-		echo "Image '$IMAGE' expected as image #$NUM" >&2
-		exit 1
-	fi
-
-	LEN=$((0 + $(head -c $DETAIL_OFFSET "$HEADER" | tail -c 16 | awk -F'\0+' '{print $1}')))
-	POS=$((POS + LEN))
+	read_image_details "$1"
 
 	echo "Extracting image #$NUM ($IMAGE) to '$OUT' ($LEN bytes)"
 	head -c "$POS" "$LOCAL" | tail -c "$LEN" > "$OUT"

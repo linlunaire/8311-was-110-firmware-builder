@@ -5,9 +5,23 @@ return baseclass.extend({
 	title: _('PON Status'),
 
 	load: function () {
-		return L.Request.get(L.url('admin/8311/gpon_status')).then(function (res) {
+		if (document.hidden)
+			return Promise.resolve(this.lastStatus || {});
+		if (this.pendingStatus)
+			return this.pendingStatus;
+
+		var self = this;
+		this.pendingStatus = L.Request.get(L.url('admin/8311/gpon_status')).then(function (res) {
 			return res.json();
+		}).then(function (data) {
+			self.pendingStatus = null;
+			self.lastStatus = data;
+			return data;
+		}, function (error) {
+			self.pendingStatus = null;
+			throw error;
 		});
+		return this.pendingStatus;
 	},
 
 	render: function (data) {

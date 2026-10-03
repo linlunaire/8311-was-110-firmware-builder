@@ -11,6 +11,57 @@ input#firmware-file::file-selector-button {
 	display: none;
 }
 
+[id="8311-recovery-page"] [hidden] {
+	display: none !important;
+}
+
+[id="8311-recovery-page"] .cbi-value-field input[type="file"] {
+	max-width: 100%;
+	width: 20em;
+	margin: .3em .6em .3em 0;
+}
+
+[id="8311-recovery-page"] .cbi-value-field select {
+	width: auto;
+	max-width: 100%;
+}
+
+[id="8311-recovery-page"] .cbi-button {
+	margin: .3em .4em .3em 0;
+}
+
+[id="8311-recovery-page"] .cbi-value-description {
+	line-height: 1.6;
+}
+
+.recovery-feedback, .firmware-actions, #switch-reboot-section {
+	margin: 1em 0;
+}
+
+.firmware-version {
+	padding-top: .4em;
+	overflow-wrap: anywhere;
+}
+
+#firmware_output {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	max-height: 24em;
+	overflow: auto;
+}
+
+@media (max-width: 600px) {
+	[id="8311-recovery-page"] .cbi-value-title {
+		float: none;
+		display: block;
+		width: auto;
+		text-align: left;
+	}
+	[id="8311-recovery-page"] .cbi-value-field {
+		margin-left: 0;
+	}
+}
+
 #hook-script-modal {
 	position: fixed;
 	top: 0;

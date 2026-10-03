@@ -14,7 +14,8 @@ RX_LOS=$(fwenv_get_8311 "rx_los")
 if $RX_LOS; then
 	echo "8311 RX_LOS daemon: start monitoring LOS alarm" | to_console
 	while true; do
-		LOS_VALUE="$(cat "$GPIO/value")"
+		LOS_VALUE=""
+		IFS= read -r LOS_VALUE < "$GPIO/value"
 		LOS_ALARM=$([ -d "/sys/devices/virtual/net/gem-omci" ] && { pon alarm_status_get 0 | grep -E -o 'alarm_status=\d+' | cut -d= -f2; } || echo "0")
 
 		if [ "$LOS_VALUE" -ne "$LOS_ALARM" ] 2>/dev/null; then
@@ -27,7 +28,9 @@ if $RX_LOS; then
 else
 	echo "8311 RX_LOS daemon: start disabling RX_LOS" | to_console
 	while true; do
-		if [ "$(cat "$GPIO/value")" -ne 0 ]; then
+		LOS_VALUE=""
+		IFS= read -r LOS_VALUE < "$GPIO/value"
+		if [ "$LOS_VALUE" -ne 0 ] 2>/dev/null; then
 			echo "8311 RX_LOS daemon: setting RX_LOS pin to low" | to_console
 			echo "low" > "$GPIO/direction"
 		fi

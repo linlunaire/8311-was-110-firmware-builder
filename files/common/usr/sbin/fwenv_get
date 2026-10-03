@@ -23,6 +23,9 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 		--)
 			shift
+			[ $# -ge 1 ] && [ $# -le 2 ] || _help 1
+			NAME="$1"
+			DEFAULT="${2-}"
 			break
 		;;
 		-h|--help)

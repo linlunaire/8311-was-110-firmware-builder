@@ -1,5 +1,148 @@
 # 8311 WAS-110 Firmware Builder
 
+## Reliability improvements in this fork
+
+This fork keeps the upstream PON, MIB and VLAN defaults. It does not add ISP
+profiles, change the kernel, or claim higher line throughput.
+
+This is not a drop-in replacement for the xiao-k233 CN firmware. In that fork,
+`fix_vlans=2` selects TC mode; upstream uses the same value for Hook script only.
+CN's PVID, multicast and IGMP settings are not migrated by this branch. Verify
+the existing line's Internet/IPTV behavior before considering migration; see
+the [CN comparison](docs/reference-designs.md#cn-configuration-compatibility).
+
+- Firmware installation always validates all three images under the upgrade
+  lock before writing. Extraction, size, hash, UBI write/readback and boot-bank
+  errors return failure to the caller. The existing two environment writes are
+  retained. Exit status `2` means the initial installation prompt was cancelled.
+  Images are staged privately in `/tmp` so the bytes installed are the bytes
+  validated; installation needs additional free RAM-backed storage for the
+  uncompressed kernel, bootcore and rootfs files. A staging failure occurs before
+  any flash write. Validation alone stages one image at a time.
+- Stock-image extraction checks the complete header table and component bounds
+  before replacing output files. Invalid lengths and truncated tails cannot
+  silently produce components containing bytes from earlier parts of the image.
+- Configuration saves validate every field using the same definitions as the
+  form, write only changed values and check both command status and readback.
+  Web saves are serialized. Failed saves identify the failed field, confirmed
+  saved fields and remaining fields; writes across multiple variables are
+  **not atomic**. A failed batch does not request VLAN application. Config and
+  Hook saves use LuCI's POST/token protection. Hook replacement checks shell
+  syntax and file operations before replacing the old file.
+- Firmware and support actions require POST and the LuCI session token; GET
+  only displays their pages. Firmware uploads have a 128 MiB limit, private
+  session-specific staging and checked writes/atomic promotion. Web firmware
+  operations are serialized, failed installations retain the uploaded file,
+  and successful installations or cancellation remove it. Abandoned uploads
+  remain in RAM until cancellation or reboot. Installation still validates
+  all components again before any flash write. Only confirmed installation
+  success invalidates alternate-bank metadata or offers the reboot button.
+- Missing/short EEPROM data and missing thermal/PON readings no longer break
+  status requests. Unavailable numeric metrics are JSON `null`; `sample_valid`
+  is false if any numeric metric is unavailable. Zero optical power has no
+  finite dBm reading. Monitoring clients that assumed numeric values must handle
+  `null`. Optical temperature is decoded as signed Q8.8, as specified in
+  [SFF-8472](https://members.snia.org/document/dl/25916).
+- Dynamic EEPROM reads use only bytes 96–105; drivers without seek support
+  fall back to a bounded 106-byte read. Module text needs only the first 60
+  bytes of EEPROM 50. Status requests reuse the existing module-type cache,
+  parse the active bank directly from the kernel command line, and bound the
+  PON command with a timeout. Hidden pages skip PON refresh requests and
+  concurrent requests from one status panel share the same pending response.
+  RX_LOS polling uses shell builtin reads at the original one-/three-second
+  cadence. No resident service or CPU-governor change is added.
+- VLAN display avoids one redundant decoder invocation. The VLAN daemon keeps
+  the healthy five-second poll, retries failures at 5/10/20/40/60-second
+  intervals, uses a nonblocking apply lock, and bounds detection/apply commands
+  with the bundled BusyBox `timeout`. Successful saves notify the daemon and
+  invalidate its cached local VLAN settings. Hook content changes are detected
+  even if the network topology is unchanged. After changing VLAN environment
+  values directly, run `touch /tmp/8311-vlans.reload`. Disabling fixes stops new
+  applications; reboot to remove previously applied rules.
+- Support archives default to numeric VLAN/daemon settings and VLAN tables.
+  Other environment values are redacted; raw logs, pontop, TC and OMCI dumps
+  are omitted. Use `8311-support.sh --raw` or explicitly check **Include raw
+  diagnostics** in LuCI when a private investigation needs those sources.
+  Review archives before sharing. Registration ID, logical password and root
+  password hash values are no longer logged during configuration.
+
+## Restore and firmware update
+
+**System → Restore / Flash Firmware** provides the two sections without a
+backup-generation section. The old `/admin/8311/firmware` URL remains usable.
+The page uses the existing LuCI theme and includes Simplified Chinese strings.
+
+Reset offers two scopes: keep PON identity/authentication (default), or also
+clear known PON settings. Both clear the other known 8311 overrides and the
+VLAN hook. Factory calibration, bootloader variables, firmware banks, SSH keys
+and certificates are kept. This resets 8311-managed configuration, not arbitrary
+files or unknown settings from another fork. After reboot the management IP is
+`192.168.11.1` and the root password returns to the image's default.
+
+Configuration restore accepts plain-text `8311_key=value` files up to 64 KiB,
+including compatible `fwenvs_backup.env` files. It validates the entire file,
+previews changed field names without exposing credentials, and requires a
+separate confirmation. Missing fields are kept; an empty value removes an
+override. Unknown/duplicate keys, invalid values, bootloader variables and
+enabling persistent RootFS are rejected. CN-specific settings and generic
+OpenWrt backup archives are not supported. Disable persistent RootFS and reboot
+before using recovery. Imports and resets share the WebUI configuration and
+firmware locks, check each write, report partial failures, and never reboot
+automatically. Reboot is a separate action after success.
+
+Firmware updates continue to accept WAS-110 `local-upgrade.tar` packages with
+the existing dual-bank validation and installation flow. These are not generic
+ImmortalWrt/OpenWrt sysupgrade images. The distribution comparison and hardware
+support evidence are in [immortalwrt-assessment.md](docs/immortalwrt-assessment.md).
+
+## Building and testing
+
+Use a Linux build environment with Bash, GNU tools, Python 3, Perl, `sudo`,
+`squashfs-tools`, `u-boot-tools` and `mtd-utils` (plus `7z` for `--release`).
+The stock BFW upgrade image and the basic firmware's three extracted components
+must be supplied separately. Initialize the pinned submodule over HTTPS:
+
+```sh
+git submodule update --init
+./build.sh --bfw-image-file stock/bfw.img --basic-image-dir stock/basic \
+  --basic -o out/local-upgrade.img -O out/local-upgrade.tar
+```
+
+`--image` and `--image-dir` remain accepted aliases. Caller-relative paths work
+when invoking `build.sh` from another directory. Missing option values, inputs,
+submodule files or required image tools fail before existing build output is
+removed. Use a Linux checkout to preserve the firmware's symlinks and modes.
+
+Offline regressions use fake UBI devices, environment writers, EEPROMs and LuCI
+services; they do not flash hardware or need proprietary stock images:
+
+```sh
+sudo apt-get install lua5.1 pcre2-utils busybox
+python3 -m unittest discover -s tests -v
+TEST_SHELL=busybox TEST_SHELL_ARGS=sh python3 -m unittest discover -s tests -v
+```
+
+Windows can run the same tests with Git Bash, Python and `lupa` (its Lua 5.1
+runtime is selected explicitly). The CI workflow defines Linux shell and BusyBox
+variants. `tests/frontend_smoke.cjs` is an optional Playwright/Chromium test of the
+real frontend JavaScript against local fixture endpoints; run it with
+`node tests/frontend_smoke.cjs` in an environment where Playwright is installed.
+Set `BROWSER_CHANNEL=msedge` or `chrome` to use that installed browser instead.
+Run `node tests/status_poll_smoke.cjs` to check visibility, request coalescing
+and retries without browser dependencies.
+Passing these checks does not validate a built firmware, booting, PON
+registration, OLT interoperability or real link performance. Those require the
+appropriate stock images and a WAS-110 test device.
+
+See [reference-designs.md](docs/reference-designs.md) for the source-pinned
+comparison with other ONU projects, OpenWrt, LuCI and procd, including which
+designs can be reused and which still need hardware or ISP verification.
+The checks actually performed and remaining coverage gaps are recorded in
+[validation.md](docs/validation.md).
+Device measurements and the boundary between response-time improvements and
+unverified thermal effects are documented in
+[performance-analysis.md](docs/performance-analysis.md).
+
 ## Custom fwenvs
 ```
 8311_fix_vlans=1
