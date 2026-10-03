@@ -14,40 +14,54 @@ local reboot_enable = firmware_installed and firmware_action == "install"
 <script src="<%=resource%>/jquery.validate.min.js"></script>
 <script src="<%=resource%>/view/8311.js"></script>
 
-<h2 name="content"><%:Restore / Flash Firmware%></h2>
+<h2 name="content"><%:Backup / Flash Firmware%></h2>
 <div id="8311-recovery-page">
 <div class="cbi-section">
-	<h3><%:Restore%></h3>
-	<p class="cbi-section-descr"><%:Restore 8311 settings or reset them to the firmware defaults. Factory calibration, bootloader and firmware banks are preserved.%></p>
+	<h3><%:Backup / Restore%></h3>
+	<p class="cbi-section-descr"><%:Download a configuration backup before upgrading, or restore one after installation. Factory calibration, bootloader and firmware banks are not part of a settings backup.%></p>
 	<form id="recovery-form" action="<%=url('admin', 'system', 'flash', 'recovery')%>" method="post"
 		data-failure="<%=esc(translate('Unable to complete recovery. Check the connection and retry.'))%>"
-		data-file-error="<%=esc(translate('Choose a non-empty 8311 settings file no larger than 64 KiB.'))%>"
+		data-file-error="<%=esc(translate('Choose a non-empty 8311 settings file no larger than 128 KiB.'))%>"
+		data-backup-success="<%=esc(translate('Configuration downloaded. Keep the file private; it contains authentication settings. Restore it here after installing compatible firmware.'))%>"
+		data-hook-confirm="<%=esc(translate('This backup includes a VLAN hook script that will run when VLAN fixes are enabled. Restore it only if you trust its source. Continue?'))%>"
 		data-reset-confirm="<%=esc(translate('Reset the known 8311 settings and remove the VLAN hook? After reboot, management will use 192.168.11.1 and the root password will return to the firmware default.'))%>"
 		data-pon-confirm="<%=esc(translate('PON identity and authentication settings will also be replaced or cleared. Continue?'))%>">
 		<input type="hidden" name="token" value="<%=token%>" />
 		<div class="cbi-value">
-			<label class="cbi-value-title" for="recovery-preserve"><%:Recovery scope%></label>
+			<label class="cbi-value-title"><%:Download backup%></label>
 			<div class="cbi-value-field">
-				<select id="recovery-preserve" onchange="cancelRecoveryPreview();">
-					<option value="1" selected="selected"><%:Keep PON identity and authentication (recommended)%></option>
-					<option value="0"><%:Include PON identity and authentication%></option>
-				</select>
-				<div class="cbi-value-description"><%:The first mode keeps the PON serial number, LOID and PLOAM. The second mode also resets or restores all known PON settings.%></div>
+				<button type="button" class="cbi-button cbi-button-action recovery-button" onclick="return backupSettings(this);"><%:Generate backup…%></button>
+				<div class="cbi-value-description"><%:Includes all supported 8311 settings, PON identity and authentication, management, VLANs and the custom VLAN hook. The private .env file can be restored below; it does not include SSH keys, certificates or arbitrary system files.%></div>
 			</div>
 		</div>
 		<div class="cbi-value">
 			<label class="cbi-value-title"><%:Reset to defaults%></label>
 			<div class="cbi-value-field">
+				<select id="reset-preserve" aria-label="<%:Reset scope%>">
+					<option value="1" selected="selected"><%:Keep PON identity and authentication (recommended)%></option>
+					<option value="0"><%:Reset all supported settings, including PON%></option>
+				</select>
 				<button type="button" class="cbi-button cbi-button-negative recovery-button" onclick="return resetSettings(this);"><%:Perform reset…%></button>
 				<div class="cbi-value-description"><%:Resets management, VLAN, device and virtual SFP settings. Reboot is a separate step after a successful reset.%></div>
 			</div>
 		</div>
 		<div class="cbi-value">
+			<label class="cbi-value-title" for="recovery-preserve"><%:Restore scope%></label>
+			<div class="cbi-value-field">
+				<select id="recovery-preserve" onchange="cancelRecoveryPreview();">
+					<option value="0" selected="selected"><%:Include PON identity and authentication%></option>
+					<option value="1"><%:Keep current PON identity and authentication%></option>
+				</select>
+				<div class="cbi-value-description"><%:A full restore includes the saved PON serial number, LOID and PLOAM. Choose to keep current PON settings when importing another device's backup.%></div>
+			</div>
+		</div>
+
+		<div class="cbi-value">
 			<label class="cbi-value-title" for="recovery-file"><%:Restore configuration%></label>
 			<div class="cbi-value-field">
 				<input id="recovery-file" type="file" accept=".env,text/plain" onchange="cancelRecoveryPreview();" />
 				<button type="button" class="cbi-button cbi-button-action recovery-button" onclick="return previewRecovery(this);"><%:Upload and check…%></button>
-				<div class="cbi-value-description"><%:Use an 8311 .env file from this firmware family, such as fwenvs_backup.env. Maximum: 64 KiB. OpenWrt backup archives and CN-specific settings are not supported.%></div>
+				<div class="cbi-value-description"><%:Select the .env file generated above, or a compatible fwenvs_backup.env file. Maximum: 128 KiB. Generic OpenWrt archives and CN-only settings cannot be imported. Every field and any included hook are checked before changes are made.%></div>
 			</div>
 		</div>
 		<div id="recovery-preview" class="recovery-feedback" hidden>
@@ -69,6 +83,7 @@ local reboot_enable = firmware_installed and firmware_action == "install"
 <div class="cbi-section">
 	<h3><%:Flash new firmware image%></h3>
 	<p class="cbi-section-descr"><%:Upload a WAS-110 8311 local-upgrade.tar file. It is checked before installation to the inactive bank. Generic OpenWrt and ImmortalWrt sysupgrade images are not accepted.%></p>
+	<p class="cbi-section-descr"><%:Current 8311 settings and the VLAN hook are kept during a normal upgrade. Reinstalling this firmware does not reset them. Keep a downloaded backup for later recovery, and use Reset to defaults only when you intend to clear settings.%></p>
 	<form id="firmware-form" method="post" action="<%=url('admin', 'system', 'flash')%>" enctype="multipart/form-data">
 		<input type="hidden" name="token" value="<%=token%>" />
 		<input id="firmware-action" type="hidden" name="action" value="validate" />

@@ -685,7 +685,7 @@ msgid "Keep PON identity and authentication (recommended)"
 msgstr "保留 PON 身份和认证参数（推荐）"
 
 msgid "Include PON identity and authentication"
-msgstr "同时恢复／重置 PON 身份和认证参数"
+msgstr "包含 PON 身份和认证参数"
 
 msgid "The first mode keeps the PON serial number, LOID and PLOAM. The second mode also resets or restores all known PON settings."
 msgstr "第一种模式保留 PON 序列号、LOID、PLOAM 等参数；第二种模式也会重置或恢复所有已知的 PON 设置。"
@@ -812,3 +812,75 @@ msgstr "请选择有效的选项。"
 
 msgid "Value does not match the required format."
 msgstr "配置值不符合规定的格式。"
+
+msgid "Backup / Flash Firmware"
+msgstr "备份与更新"
+
+msgid "Backup / Restore"
+msgstr "备份与恢复"
+
+msgid "Download a configuration backup before upgrading, or restore one after installation. Factory calibration, bootloader and firmware banks are not part of a settings backup."
+msgstr "升级前可下载配置备份，安装后也可在此恢复。配置备份不包含出厂校准数据、引导程序和固件镜像。"
+
+msgid "Choose a non-empty 8311 settings file no larger than 128 KiB."
+msgstr "请选择非空的 8311 配置文件，文件大小不能超过 128 KiB。"
+
+msgid "Configuration downloaded. Keep the file private; it contains authentication settings. Restore it here after installing compatible firmware."
+msgstr "配置已下载。文件包含认证信息，请妥善保管；安装兼容固件后可在此导入恢复。"
+
+msgid "This backup includes a VLAN hook script that will run when VLAN fixes are enabled. Restore it only if you trust its source. Continue?"
+msgstr "备份包含自定义 VLAN 脚本，启用 VLAN 修正后会运行。请仅恢复来源可信的备份。确定继续？"
+
+msgid "Download backup"
+msgstr "下载备份"
+
+msgid "Generate backup…"
+msgstr "生成配置备份…"
+
+msgid "Includes all supported 8311 settings, PON identity and authentication, management, VLANs and the custom VLAN hook. The private .env file can be restored below; it does not include SSH keys, certificates or arbitrary system files."
+msgstr "包含本固件支持的全部 8311 设置：PON 身份与认证、管理、VLAN 及自定义 VLAN 脚本。下载的 .env 文件可在下方直接恢复；不包含 SSH 密钥、证书或自行修改的系统文件。"
+
+msgid "Restore scope"
+msgstr "恢复范围"
+
+msgid "Keep current PON identity and authentication"
+msgstr "保留当前 PON 身份和认证参数"
+
+msgid "A full restore includes the saved PON serial number, LOID and PLOAM. Choose to keep current PON settings when importing another device's backup."
+msgstr "完整恢复会导入备份中的 PON 序列号、LOID 和 PLOAM。若使用其他设备的备份，可选择保留当前 PON 参数。"
+
+msgid "Reset scope"
+msgstr "重置范围"
+
+msgid "Reset all supported settings, including PON"
+msgstr "重置全部支持的配置（含 PON 参数）"
+
+msgid "Select the .env file generated above, or a compatible fwenvs_backup.env file. Maximum: 128 KiB. Generic OpenWrt archives and CN-only settings cannot be imported. Every field and any included hook are checked before changes are made."
+msgstr "请选择上方生成的 .env 备份或兼容的 fwenvs_backup.env 文件，上限 128 KiB。写入前会校验所有配置项和脚本。不接受通用 OpenWrt 备份包或 CN 分支专用配置。"
+
+msgid "Current 8311 settings and the VLAN hook are kept during a normal upgrade. Reinstalling this firmware does not reset them. Keep a downloaded backup for later recovery, and use Reset to defaults only when you intend to clear settings."
+msgstr "正常升级会保留当前 8311 配置和 VLAN 脚本，重装本固件也不会清空它们。下载的备份可用于日后恢复；需要清空配置时，请单独执行“恢复默认设置”。"
+
+msgid "Unable to back up the VLAN hook. Check its size and contents."
+msgstr "无法备份 VLAN 脚本，请检查脚本内容和大小。"
+
+msgid "A stored setting cannot be represented in a backup."
+msgstr "某项已保存的配置无法写入备份，请检查配置内容。"
+
+msgid "The configuration is too large to back up."
+msgstr "配置内容超过备份大小限制。"
+
+msgid "The backup contains an invalid VLAN hook."
+msgstr "备份中的 VLAN 脚本编码或内容无效。"
+
+msgid "Unable to read the VLAN hook. No changes were made."
+msgstr "无法读取 VLAN 脚本，尚未进行任何修改。"
+
+msgid "The VLAN hook could not be validated. No changes were made."
+msgstr "VLAN 脚本未通过校验，尚未进行任何配置修改。"
+
+msgid "VLAN hook script"
+msgstr "自定义 VLAN 脚本"
+
+msgid "Settings were saved, but the VLAN hook could not be restored. Review it before rebooting."
+msgstr "配置已保存，但 VLAN 脚本恢复失败。请在重启前检查脚本。"

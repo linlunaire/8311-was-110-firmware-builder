@@ -31,10 +31,13 @@ const html = `<!doctype html><meta charset="utf-8">
 
 // A native LuCI render can be supplied to exercise the exact template DOM.
 const recoveryHtml = `<form id="recovery-form" action="/admin/system/flash/recovery" method="post"
-data-file-error="Choose a non-empty 8311 settings file no larger than 64 KiB."
+data-file-error="Choose a non-empty 8311 settings file no larger than 128 KiB."
+data-backup-success="Configuration downloaded" data-hook-confirm="Restore the included script?"
 data-failure="Recovery failed" data-reset-confirm="Reset settings?" data-pon-confirm="Also reset PON?">
 <input type="hidden" name="token" value="fixture-token">
-<select id="recovery-preserve" onchange="cancelRecoveryPreview()"><option value="1">Keep PON</option><option value="0">Include PON</option></select>
+<button type="button" class="recovery-button" onclick="return backupSettings(this)">Backup</button>
+<select id="recovery-preserve" onchange="cancelRecoveryPreview()"><option value="0">Include PON</option><option value="1">Keep PON</option></select>
+<select id="reset-preserve"><option value="1">Keep PON</option><option value="0">Reset PON</option></select>
 <button type="button" class="recovery-button" onclick="return resetSettings(this)">Reset</button>
 <input id="recovery-file" type="file" onchange="cancelRecoveryPreview()">
 <button type="button" class="recovery-button" onclick="return previewRecovery(this)">Check</button>
@@ -55,6 +58,7 @@ const assetRoutes = {
   '/resources/jquery.validate.min.js': 'jquery.validate.min.js',
   '/resources/view/8311.js': 'view/8311.js', '/resources/view/8311.css': 'view/8311.css'
 };
+const backupContents = '# 8311 settings backup v1\n8311_hostname=fixture\n8311_loid=secret-fixture\n8311_backup_hook_b64=IyBmaXh0dXJlIGhvb2sK\n';
 
 const server = http.createServer(async (req, res) => {
   if (assetRoutes[req.url]) {
@@ -64,12 +68,18 @@ const server = http.createServer(async (req, res) => {
     let data = '';
     for await (const chunk of req) data += chunk;
     requests.push({ url: req.url, values: new URLSearchParams(data), raw: data });
+    if (status === 200 && new URLSearchParams(data).get('action') === 'backup') {
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(backupContents);
+      return;
+    }
     res.writeHead(status, { 'Content-Type': 'application/json' });
     const recovery = req.url === '/admin/system/flash/recovery';
     const preview = new URLSearchParams(data).get('action') === 'preview';
     res.end(JSON.stringify(status === 200 ? (recovery ?
       { success: true, message: preview ? 'Checked fixture file' : 'Restored fixture settings',
-        count: 1, names: ['Hostname'], skipped: 1, reboot_required: !preview } :
+        count: 1, names: ['Hostname'], skipped: 1, reboot_required: !preview,
+        hook_script: (new URLSearchParams(data).get('content') || '').includes('backup_hook_b64=Iy') } :
       { success: true, message: 'Saved fixture settings' }) :
       { success: false, message: 'Invalid fixture settings', errors: { internet_vlan: 'Rejected VLAN' } }));
   } else if (req.url === '/get_hook_script') {
@@ -185,9 +195,12 @@ const server = http.createServer(async (req, res) => {
     await page.waitForLoadState('networkidle');
     const recoveryCheck = page.locator('button[onclick*="previewRecovery"]');
     const recoveryReset = page.locator('button[onclick*="resetSettings"]');
+    assert.equal(await page.locator('#recovery-preserve').inputValue(), '0');
+    assert.equal(await page.locator('#reset-preserve').inputValue(), '1');
+    await page.locator('#recovery-preserve').selectOption('1');
     const beforeRecovery = requests.length;
     await recoveryCheck.click();
-    await page.getByText('Choose a non-empty 8311 settings file no larger than 64 KiB.', { exact: true }).waitFor();
+    await page.getByText('Choose a non-empty 8311 settings file no larger than 128 KiB.', { exact: true }).waitFor();
     assert.equal(requests.length, beforeRecovery);
     await page.locator('#recovery-file').setInputFiles({ name: 'settings.env', mimeType: 'text/plain',
       buffer: Buffer.from('8311_hostname=new\n8311_loid=secret-fixture\n') });
@@ -229,7 +242,7 @@ const server = http.createServer(async (req, res) => {
     await recoveryReset.click();
     assert.equal(requests.length, beforeReset);
     acceptDialog = true;
-    await page.locator('#recovery-preserve').selectOption('0');
+    await page.locator('#reset-preserve').selectOption('0');
     await recoveryReset.click();
     await page.getByText('Restored fixture settings', { exact: true }).waitFor();
     assert.equal(requests.length, beforeReset + 1);
@@ -238,6 +251,39 @@ const server = http.createServer(async (req, res) => {
     assert.equal(requests.at(-1).values.get('preserve_pon'), '0');
     assert.deepEqual(errors, []);
     console.log('ok - reset cancellation makes no request and including PON requires the additional confirmation');
+
+    await page.goto(firmwareUrl);
+    await page.waitForLoadState('networkidle');
+    const backupButton = page.locator('button[onclick*="backupSettings"]');
+    const [download] = await Promise.all([page.waitForEvent('download'), backupButton.click()]);
+    assert.match(download.suggestedFilename(), /^8311-settings-.*\.env$/);
+    const downloaded = fs.readFileSync(await download.path());
+    assert.equal(downloaded.toString(), backupContents);
+    assert.equal(requests.at(-1).values.get('action'), 'backup');
+    assert.equal(requests.at(-1).values.get('token'), 'fixture-token');
+    assert(!await page.locator('body').innerText().then(text => text.includes('secret-fixture')));
+    await page.waitForFunction(() => !document.querySelector('button[onclick*="backupSettings"]').disabled);
+    console.log('ok - backup downloads a private settings file without rendering credentials or navigating away');
+
+    await page.locator('#recovery-file').setInputFiles({ name: download.suggestedFilename(), mimeType: 'text/plain', buffer: downloaded });
+    await recoveryCheck.click();
+    await page.locator('#recovery-preview').waitFor();
+    const beforeRoundTrip = requests.length;
+    const beforeDialogs = dialogs;
+    await page.locator('#recovery-apply').click();
+    await page.getByText('Restored fixture settings', { exact: true }).waitFor();
+    assert.equal(requests.length, beforeRoundTrip + 1);
+    assert.equal(dialogs, beforeDialogs + 2);
+    assert.equal(requests.at(-1).values.get('content'), backupContents);
+    assert.equal(requests.at(-1).values.get('preserve_pon'), '0');
+    console.log('ok - a downloaded backup can be restored including PON and the explicitly confirmed hook');
+
+    status = 500;
+    await backupButton.click();
+    await page.getByText('Invalid fixture settings', { exact: true }).waitFor();
+    await page.waitForFunction(() => !document.querySelector('button[onclick*="backupSettings"]').disabled);
+    assert.deepEqual(errors, []);
+    console.log('ok - backup failure shows feedback and re-enables download and firmware controls');
   } finally {
     if (browser) await browser.close();
     server.close();

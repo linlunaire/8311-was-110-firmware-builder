@@ -32,3 +32,30 @@ jobs:
         run: python3 -m unittest discover -s tests -v
       - name: Check PON status polling
         run: node tests/status_poll_smoke.cjs
+
+  firmware:
+    name: Build verified basic firmware
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install image tools
+        run: sudo apt-get update && sudo apt-get install -y squashfs-tools p7zip-full
+      - name: Download and verify the public upstream base
+        run: |
+          mkdir -p stock
+          curl --fail --location --retry 3 --output stock/upstream-v2.8.3.7z https://github.com/djGrrr/8311-was-110-firmware-builder/releases/download/v2.8.3/WAS-110_8311_firmware_mod_v2.8.3_basic.7z
+          echo '5d72e7552e396127b59a548c6163113d088d545708aecb0fed38097b862288f8  stock/upstream-v2.8.3.7z' | sha256sum --check
+          7z x -so stock/upstream-v2.8.3.7z local-upgrade.tar > stock/upstream-v2.8.3-local-upgrade.tar
+      - name: Build and verify every rootfs file, mode and symlink
+        run: sudo python3 tools/build_from_release.py --base stock/upstream-v2.8.3-local-upgrade.tar --output out/release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WAS110-basic-${{ github.sha }}
+          path: out/release/
+          if-no-files-found: error
+          retention-days: 30

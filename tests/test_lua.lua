@@ -2,6 +2,11 @@
 local root = REPO_ROOT or "."
 package.path = root .. "/files/basic/usr/lib/lua/?.lua;" .. package.path
 string.trim = function(s) return s:match("^%s*(.-)%s*$") end
+local saved_arg = arg
+arg = nil
+local native_base64 = require "base64"
+local real_base64 = { enc = native_base64.enc, dec = native_base64.dec }
+arg = saved_arg
 
 local passed = 0
 local function check(name, fn)
@@ -55,6 +60,7 @@ local function setup()
 		glob = function() return ipairs({}) end,
 	}
 	local http = {
+		HTTP_MAX_CONTENT = 102400,
 		formvalue = function(key)
 			if key then return (s.form or {})[key] end
 			return s.form or {}
@@ -67,7 +73,8 @@ local function setup()
 			s.upload_handled = true
 			if s.upload then s.upload(callback) end
 		end,
-		prepare_content = function() end,
+		prepare_content = function(value) s.content_type = value end,
+		header = function(key, value) s.headers = s.headers or {}; s.headers[key] = value end,
 		status = function(code) s.status = code end,
 		write = function(data) s.text = s.text .. data end,
 		write_json = function(data) s.json = data end,
@@ -136,6 +143,7 @@ local function setup()
 			context = { authsession = string.rep("a", 32) },
 			test_post_security = function()
 				s.security_checked = true
+				s.parse_limit = http.HTTP_MAX_CONTENT
 				if (s.form or {}).token ~= "fixture-token" then s.status = 403; return false end
 				return true
 			end,
@@ -143,8 +151,7 @@ local function setup()
 		["8311.version"] = { version = "test", revision = "test", variant = "basic" },
 		["luci.model.uci"] = { get = function() return nil end },
 		["luci.jsonc"] = {},
-		["base64"] = { enc = function(value) return "encoded:" .. value end,
-			dec = function(value) return value:match("^encoded:(.*)$") end },
+		["base64"] = real_base64,
 	}
 	for name, instance in pairs(modules) do package.loaded[name] = instance end
 	luci = { http = http, sys = sys }
@@ -603,7 +610,7 @@ check("invalid recovery files fail in full before the first write", function()
 		"8311_hostname=one\n8311_hostname=two\n", "8311_internet_vlan=4096\n",
 		"8311_pingd=on\n", "8311_hostname=bad\0data\n", "#!/bin/sh\necho bad\n",
 		"8311_hostname=" .. string.rep("x", 101), "8311_persist_root=1\n",
-		"8311_fw_match_b64=invalid\n", string.rep("x", 65537), "# empty\n",
+		"8311_fw_match_b64=invalid\n", string.rep("x", 131073), "# empty\n",
 	}) do
 		local s, _, controller = recovery_fixture()
 		s.form.action, s.form.confirm, s.form.content = "restore", "1", invalid
@@ -615,10 +622,10 @@ end)
 check("recovery accepts CRLF, canonical encoded values and empty overrides with explicit PON replacement", function()
 	local s, _, controller = recovery_fixture()
 	s.form.action, s.form.confirm, s.form.preserve_pon = "restore", "1", "0"
-	s.form.content = "# 8311 backup\r\n8311_gpon_sn=TEST1234ABCD\r\n8311_fw_match_b64=encoded:fixture\r\n8311_hostname=\r\n"
+	s.form.content = "# 8311 backup\r\n8311_gpon_sn=TEST1234ABCD\r\n8311_fw_match_b64=Zml4dHVyZQ==\r\n8311_hostname=\r\n"
 	controller.action_recovery()
 	assert(s.json.success and #s.env_writes == 3)
-	assert(s.env_writes[1].id == "gpon_sn" and s.env_writes[2].value == "encoded:fixture" and s.env_writes[3].value == "")
+	assert(s.env_writes[1].id == "gpon_sn" and s.env_writes[2].value == "Zml4dHVyZQ==" and s.env_writes[3].value == "")
 end)
 
 check("reset preserves PON and bootloader, clears only known overrides and removes the VLAN hook", function()
@@ -675,6 +682,86 @@ check("hook edits respect the configuration lock held by recovery", function()
 	controller.action_save_hook_script()
 	assert(s.status == 409 and s.files["/ptconf/8311/vlan_fixes_hook.sh"] == "old script")
 	assert(not s.files["/tmp/8311-vlans.reload"] and s.closed == 1)
+end)
+
+check("backup is a private authenticated download and never includes bootloader variables", function()
+	local s, _, controller = recovery_fixture()
+	s.form = { action = "backup", token = "fixture-token" }
+	s.method = "GET"
+	controller.action_recovery()
+	assert(s.status == 405 and s.text == "")
+	s.method, s.form.token = "POST", nil
+	controller.action_recovery()
+	assert(s.status == 403 and s.text == "")
+	s.form.token = "fixture-token"
+	controller.action_recovery()
+	assert(s.status == 200 and s.content_type == "text/plain; charset=utf-8")
+	assert(s.parse_limit == 3 * 131072 + 8192 and require("luci.http").HTTP_MAX_CONTENT == 102400)
+	assert(s.headers["Cache-Control"] == "no-store" and s.headers["Content-Disposition"]:find("attachment", 1, true))
+	assert(s.text:find("8311_loid=secret-identity\n", 1, true) and s.text:find("8311_pingd=\n", 1, true))
+	assert(not s.text:find("bootcmd", 1, true) and not s.text:find("bootdelay", 1, true))
+	assert(#s.env_writes == 0 and not s.rebooted)
+end)
+
+check("a generated backup restores credentials, defaults and the exact multiline VLAN hook", function()
+	local s, _, controller = recovery_fixture()
+	local path = "/ptconf/8311/vlan_fixes_hook.sh"
+	local hook = "#!/bin/sh\nprintf '%s\\n' 'fixture hook'\n"
+	s.files[path] = hook
+	s.form = { action = "backup", token = "fixture-token" }
+	controller.action_recovery()
+	assert(s.status == 200 and s.files[path] == hook and not s.files[path .. ".restore.123"])
+	local backup = s.text
+	local recovery = require "8311.recovery"
+	local current = { hostname = "old", loid = "secret-identity", internet_vlan = "41" }
+	local unchanged = assert(recovery.plan(backup, controller.fwenvs_8311(), current, false, false, hook))
+	assert(#unchanged.changes == 0 and not unchanged.hook_changed)
+	s.environment = "bootcmd=never change\n8311_hostname=changed\n8311_loid=changed\n8311_pingd=1\n"
+	s.files[path] = "# newer hook\n"
+	s.form = { action = "preview", token = "fixture-token", preserve_pon = "0", content = backup }
+	controller.action_recovery()
+	assert(s.json.success and s.json.count == 5 and s.json.hook_script and #s.env_writes == 0)
+	assert(s.files[path] == "# newer hook\n" and not s.files[path .. ".restore.123"])
+	s.form.action, s.form.confirm = "restore", "1"
+	controller.action_recovery()
+	assert(s.json.success and #s.env_writes == 4 and s.files[path] == hook and not s.rebooted)
+	assert(s.env_writes[1].id == "loid" and s.env_writes[1].value == "secret-identity")
+	assert(s.env_writes[4].id == "pingd" and s.env_writes[4].value == "")
+	assert(not s.files[path .. ".restore.123"])
+end)
+
+check("hook validation fails before settings writes and staged files are removed after partial failure", function()
+	for _, failure in ipairs({ "encoding", "syntax", "write", "environment" }) do
+		local s, _, controller = recovery_fixture()
+		local path = "/ptconf/8311/vlan_fixes_hook.sh"
+		s.files[path] = "# original\n"
+		s.form.action, s.form.confirm = "restore", "1"
+		s.form.content = "8311_hostname=new\n8311_backup_hook_b64=" .. real_base64.enc("# replacement\n") .. "\n"
+		if failure == "encoding" then s.form.content = "8311_backup_hook_b64=invalid!\n"
+		elseif failure == "syntax" then s.call_code = 1
+		elseif failure == "write" then s.fail_write = true
+		else s.fail_env = "hostname" end
+		controller.action_recovery()
+		assert(s.status >= 400 and #s.env_writes == 0 and not s.rebooted, failure)
+		assert(s.files[path] == "# original\n" and not s.files[path .. ".restore.123"], failure)
+	end
+end)
+
+check("backup read failures return no partial file and omitted legacy hooks remain unchanged", function()
+	local s, _, controller = recovery_fixture()
+	s.form = { action = "backup", token = "fixture-token" }
+	s.env_read_code = 1
+	controller.action_recovery()
+	assert(s.status == 503 and s.text == "" and not s.headers["Content-Disposition"])
+	s.env_read_code = 0
+	s.environment = s.environment .. "8311_pingd=invalid\n"
+	controller.action_recovery()
+	assert(s.status == 400 and s.text == "")
+	s.environment = "8311_hostname=old\n"
+	s.files["/ptconf/8311/vlan_fixes_hook.sh"] = "# retain\n"
+	s.form = { action = "restore", token = "fixture-token", confirm = "1", content = "8311_hostname=new\n" }
+	controller.action_recovery()
+	assert(s.json.success and s.files["/ptconf/8311/vlan_fixes_hook.sh"] == "# retain\n")
 end)
 
 print(string.format("%d Lua regression groups passed", passed))

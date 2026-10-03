@@ -92,6 +92,9 @@ case "$3" in
     kernelB) id=3 ;; bootcoreB) id=4 ;; rootfsB) id=5 ;;
     *) exit 1 ;;
 esac
+if [ "${REMAPPED_A:-0}" = 1 ]; then
+    case "$3" in bootcoreA) id=2 ;; rootfsA) id=1 ;; esac
+fi
 printf 'Volume ID: %s\nSize: 1 LEBs (4096 bytes, 4 KiB)\n' "$id"
 ''')
         self.command("ubiupdatevol", '''
@@ -148,6 +151,14 @@ echo "env:$1:$2" >> "$OPS"
         result = self.run_script(self.upgrade, "--install", "--yes", self.archive())
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([line.rsplit("_", 1)[-1] for line in self.operations()[:3]], ["0", "1", "2"])
+
+    def test_declining_commit_keeps_boot_bank_and_uses_volume_names(self):
+        (self.root / "proc/cmdline").write_text("rootfsname=rootfsB\n")
+        self.env["REMAPPED_A"] = "1"
+        result = self.run_script(self.upgrade, "--install", self.archive(), stdin="y\nn\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([line.rsplit("_", 1)[-1] for line in self.operations()], ["0", "2", "1"])
+        self.assert_clean_stage()
 
     def test_explicit_install_rejects_bad_last_image_before_any_write(self):
         result = self.run_script(self.upgrade, "--install", "--yes", self.archive(corrupt="rootfs.img"))
@@ -390,6 +401,11 @@ class VlanDaemonTests(ShellFixture):
     def setUp(self):
         super().setUp()
         self.daemon = self.script("files/common/usr/sbin/8311-vlansd.sh", True)
+        # Some BusyBox ash builds implement sleep internally and bypass PATH.
+        # Explicitly call the fixture so tests never wait on real retry delays.
+        source = self.daemon.read_text()
+        self.daemon.write_text(source.replace("\n", '\nsleep() { "$TEST_BIN/sleep" "$@"; }\n', 1),
+                               encoding="utf-8", newline="\n")
         for directory in ("lib", "usr/sbin", "ptconf/8311", "sys/devices/virtual/net/gem-omci"):
             (self.root / directory).mkdir(parents=True)
         (self.root / "mode").write_text("1\n")

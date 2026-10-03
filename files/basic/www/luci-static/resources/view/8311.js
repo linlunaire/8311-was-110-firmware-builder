@@ -218,7 +218,7 @@ async function runRecovery(input, operation) {
 	if (recoveryBusy) return false;
 	recoveryBusy = true;
 	const form = document.getElementById('recovery-form');
-	const controls = Array.from(document.querySelectorAll('[id="8311-recovery-page"] button, #recovery-file, #recovery-preserve'));
+	const controls = Array.from(document.querySelectorAll('[id="8311-recovery-page"] button, #recovery-file, #recovery-form select'));
 	const disabled = controls.map(control => control.disabled);
 	controls.forEach(control => { control.disabled = true; });
 	$(input).addClass('spinning');
@@ -242,11 +242,37 @@ function requestRecovery(form, action, content, preserve) {
 	});
 }
 
+function backupSettings(input) {
+	return runRecovery(input, async function(form) {
+		const response = await fetch(form.action, {
+			method: 'POST', credentials: 'same-origin', cache: 'no-store',
+			body: new URLSearchParams({ action: 'backup', token: form.querySelector('[name="token"]').value })
+		});
+		if (!response.ok) {
+			let error = {};
+			try { error = await response.json(); } catch (_) { /* Use the translated connection message. */ }
+			throw { responseJSON: error };
+		}
+		if (!(response.headers.get('Content-Type') || '').startsWith('text/plain')) throw new Error('Invalid backup response');
+		const blob = await response.blob();
+		if (!blob.size || blob.size > 131072) throw new Error('Invalid backup size');
+		const url = URL.createObjectURL(blob);
+		const link = document.createElement('a');
+		link.href = url;
+		link.download = '8311-settings-' + new Date().toISOString().slice(0, 19).replace(/:/g, '-') + '.env';
+		document.body.appendChild(link);
+		link.click();
+		link.remove();
+		setTimeout(() => URL.revokeObjectURL(url), 1000);
+		recoveryMessage(form.dataset.backupSuccess);
+	});
+}
+
 function previewRecovery(input) {
 	return runRecovery(input, async function(form) {
 		cancelRecoveryPreview();
 		const file = document.getElementById('recovery-file').files[0];
-		if (!file || !file.size || file.size > 65536) {
+		if (!file || !file.size || file.size > 131072) {
 			recoveryMessage(form.dataset.fileError);
 			return;
 		}
@@ -258,7 +284,7 @@ function previewRecovery(input) {
 		$('#recovery-skipped').text(response.skipped || 0);
 		recoveryMessage(response.message);
 		if (response.count > 0) {
-			recoveryPreview = { content: content, preserve: preserve };
+			recoveryPreview = { content: content, preserve: preserve, hook: response.hook_script };
 			$('#recovery-preview').prop('hidden', false);
 		}
 	});
@@ -268,6 +294,7 @@ function applyRecovery(input) {
 	if (!recoveryPreview) return false;
 	const form = document.getElementById('recovery-form');
 	if (!recoveryPreview.preserve && !window.confirm(form.dataset.ponConfirm)) return false;
+	if (recoveryPreview.hook && !window.confirm(form.dataset.hookConfirm)) return false;
 	return runRecovery(input, async function() {
 		const preview = recoveryPreview;
 		cancelRecoveryPreview();
@@ -280,7 +307,7 @@ function applyRecovery(input) {
 
 function resetSettings(input) {
 	const form = document.getElementById('recovery-form');
-	const preserve = document.getElementById('recovery-preserve').value !== '0';
+	const preserve = document.getElementById('reset-preserve').value !== '0';
 	if (recoveryBusy || !window.confirm(form.dataset.resetConfirm)) return false;
 	if (!preserve && !window.confirm(form.dataset.ponConfirm)) return false;
 	return runRecovery(input, async function() {

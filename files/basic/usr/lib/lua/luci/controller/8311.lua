@@ -47,7 +47,7 @@ function index()
 	entry({"admin", "8311", "vlans", "extvlans"}, call("action_vlan_extvlans"))
 	entry({"admin", "8311", "support", "support.tar.gz"}, call("action_support_download"))
 
-	entry({"admin", "system", "flash"}, call("action_firmware"), translate("Restore / Flash Firmware"), 70).dependent=false
+	entry({"admin", "system", "flash"}, call("action_firmware"), translate("Backup / Flash Firmware"), 70).dependent=false
 	entry({"admin", "system", "flash", "recovery"}, call("action_recovery")).leaf=true
 	-- Preserve existing bookmarks while keeping one visible menu entry.
 	entry({"admin", "8311", "firmware"}, call("action_firmware"))
@@ -976,6 +976,30 @@ function action_save()
 	http.write_json(result)
 end
 
+local recovery_hook_path = "/ptconf/8311/vlan_fixes_hook.sh"
+
+local function stage_recovery_hook(content)
+	if content == "" then return "" end
+	if not fs.mkdirr("/ptconf/8311", "rwx------") or not fs.chmod("/ptconf/8311", "rwx------") then return nil end
+	local path = recovery_hook_path .. ".restore." .. nixio.getpid()
+	local fd = nixio.open(path, nixio.open_flags("wronly", "creat", "excl"), 384)
+	if not fd then return nil end
+	local ok = pcall(function()
+		local offset = 0
+		while offset < #content do
+			local written = fd:write(content, offset)
+			if not written or written <= 0 then error("short hook write") end
+			offset = offset + written
+		end
+	end)
+	local closed = fd:close()
+	if not ok or not closed or sys.call("/bin/sh -n " .. util.shellquote(path)) ~= 0 then
+		fs.remove(path)
+		return nil
+	end
+	return path
+end
+
 local function recover_settings(action, values)
 	local recovery = require "8311.recovery"
 	local raw, oversized = "", false
@@ -987,54 +1011,99 @@ local function recover_settings(action, values)
 	end
 	local current = {}
 	for id, value in ("\n" .. raw):gmatch("\n8311_([%w_]+)=([^\r\n]*)") do current[id] = value end
-	local plan, reason, field = recovery.plan(values.content, fwenvs_8311(), current,
-		values.preserve_pon ~= "0", action == "reset")
+	local categories = fwenvs_8311()
+	local hook = ""
+	if fs.lstat(recovery_hook_path) then
+		if action == "reset" then hook = "present"
+		else
+			if fs.lstat(recovery_hook_path, "type") ~= "reg" then
+				return { success = false, message = translate("Unable to read the VLAN hook. No changes were made.") }, 503
+			end
+			hook = fs.readfile(recovery_hook_path, recovery.hook_limit + 1)
+			if not hook or #hook > recovery.hook_limit then
+				return { success = false, message = translate("Unable to read the VLAN hook. No changes were made.") }, 503
+			end
+		end
+	end
+	if action == "backup" then
+		local content, reason, field = recovery.export(categories, current, hook)
+		if not content then return { success = false, field = field, message = translate(reason) }, 400 end
+		local staged = stage_recovery_hook(hook)
+		if staged == nil then return { success = false, message = translate("The VLAN hook could not be validated. No changes were made.") }, 400 end
+		if staged ~= "" then fs.remove(staged) end
+		return { success = true, download = content }, 200
+	end
+	local plan, reason, field = recovery.plan(values.content, categories, current,
+		values.preserve_pon ~= "0", action == "reset", hook)
 	if not plan then
 		return { success = false, field = field, message = translate(reason) }, 400
 	end
 	local names = {}
 	for _, change in ipairs(plan.changes) do table.insert(names, change.name) end
+	if plan.hook_changed then table.insert(names, translate("VLAN hook script")) end
+	local staged
+	if plan.hook_changed then
+		staged = stage_recovery_hook(plan.hook)
+		if staged == nil then return { success = false, message = translate("The VLAN hook could not be validated. No changes were made.") }, 400 end
+	end
 	if action == "preview" then
+		if staged and staged ~= "" then fs.remove(staged) end
 		return { success = true, count = #names, names = names, skipped = plan.skipped,
+			hook_script = plan.hook_changed and plan.hook ~= "",
 			message = #names == 0 and translate("No configuration changes to save.") or
 				translate("File checked. Only the listed settings will be replaced; missing settings are kept.") }, 200
 	end
-	local saved = {}
-	for _, change in ipairs(plan.changes) do
-		if not tools.fwenv_set(change.id, change.value, true, false) then
-			return { success = false, field = change.id, saved = saved,
-				message = string.format(translate("Restore stopped at %s. Confirmed writes: %d. Review configuration before retrying; the device was not rebooted."), change.name, #saved) }, 500
+	local ok, response, status = pcall(function()
+		local saved = {}
+		for _, change in ipairs(plan.changes) do
+			if not tools.fwenv_set(change.id, change.value, true, false) then
+				return { success = false, field = change.id, saved = saved,
+					message = string.format(translate("Restore stopped at %s. Confirmed writes: %d. Review configuration before retrying; the device was not rebooted."), change.name, #saved) }, 500
+			end
+			table.insert(saved, change.id)
 		end
-		table.insert(saved, change.id)
-	end
-	if action == "reset" then
-		local removed, code = fs.remove("/ptconf/8311/vlan_fixes_hook.sh")
-		if not removed and code ~= 2 then
-			return { success = false, saved = saved,
-				message = translate("Settings were reset, but the VLAN hook could not be removed. Review it before rebooting.") }, 500
+		if plan.hook_changed then
+			local done, code
+			if plan.hook == "" then done, code = fs.remove(recovery_hook_path)
+			else done = fs.rename(staged, recovery_hook_path) end
+			if not done and code ~= 2 then
+				return { success = false, field = "backup_hook_b64", saved = saved,
+					message = translate("Settings were saved, but the VLAN hook could not be restored. Review it before rebooting.") }, 500
+			end
+			table.insert(saved, "backup_hook_b64")
 		end
-	end
-	return { success = true, saved = saved, reboot_required = action == "reset" or #saved > 0,
-		message = action == "reset" and
-			translate("Default settings saved. Reboot to apply. The management address will be 192.168.11.1 and the root password will return to the firmware default.") or
-			translate("Settings restored. Reboot to apply network and PON changes.") }, 200
+		return { success = true, saved = saved, reboot_required = action == "reset" or #saved > 0,
+			message = action == "reset" and
+				translate("Default settings saved. Reboot to apply. The management address will be 192.168.11.1 and the root password will return to the firmware default.") or
+				translate("Settings restored. Reboot to apply network and PON changes.") }, 200
+	end)
+	if staged and staged ~= "" then fs.remove(staged) end
+	if not ok then error(response) end
+	return response, status
 end
 
 function action_recovery()
 	http.prepare_content("application/json")
+	http.header("Cache-Control", "no-store")
 	if http.getenv("REQUEST_METHOD") ~= "POST" then http.status(405, "Method Not Allowed"); return end
 	local length = tonumber(http.getenv("CONTENT_LENGTH"))
 	if not length then http.status(411, "Length Required"); return end
 	-- URL-encoded UTF-8 can use three bytes per input byte, plus token and options.
-	if not tools.is_finite(length) or length < 0 or length > 3 * 65536 + 8192 then
+	if not tools.is_finite(length) or length < 0 or length > 3 * 131072 + 8192 then
 		http.status(413, "Settings upload too large"); return
 	end
-	if not dispatcher.test_post_security() then return end
+	-- The legacy LuCI parser defaults to 100 KiB, below a URL-encoded backup.
+	-- Raise only this bounded request's parse limit, then restore the module default.
+	local previous_limit = http.HTTP_MAX_CONTENT
+	http.HTTP_MAX_CONTENT = 3 * 131072 + 8192
+	local authenticated = dispatcher.test_post_security()
+	http.HTTP_MAX_CONTENT = previous_limit
+	if not authenticated then return end
 	local values = formvalue()
 	local action = values.action
-	if (action ~= "preview" and action ~= "restore" and action ~= "reset") or
+	if (action ~= "preview" and action ~= "restore" and action ~= "reset" and action ~= "backup") or
 		(values.preserve_pon ~= nil and values.preserve_pon ~= "0" and values.preserve_pon ~= "1") or
-		(action ~= "preview" and values.confirm ~= "1") then
+		(action ~= "preview" and action ~= "backup" and values.confirm ~= "1") then
 		http.status(400, "Invalid recovery action"); return
 	end
 	-- Match the config editor lock and exclude simultaneous WebUI firmware actions.
@@ -1057,7 +1126,14 @@ function action_recovery()
 		response, status = { success = false, message = translate("Recovery failed unexpectedly. Check configuration before retrying; the device was not rebooted.") }, 500
 	end
 	http.status(status, status == 200 and "OK" or "Recovery failed")
-	http.write_json(response)
+	if response.download and status == 200 then
+		http.prepare_content("text/plain; charset=utf-8")
+		http.header("Content-Disposition", 'attachment; filename="8311-settings.env"')
+		http.header("X-Content-Type-Options", "nosniff")
+		http.write(response.download)
+	else
+		http.write_json(response)
+	end
 end
 
 function action_pon_explorer()

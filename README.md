@@ -66,11 +66,20 @@ the [CN comparison](docs/reference-designs.md#cn-configuration-compatibility).
   Review archives before sharing. Registration ID, logical password and root
   password hash values are no longer logged during configuration.
 
-## Restore and firmware update
+## Backup, restore and firmware update
 
-**System → Restore / Flash Firmware** provides the two sections without a
-backup-generation section. The old `/admin/8311/firmware` URL remains usable.
+**System → Backup / Flash Firmware** provides configuration backup/restore and
+firmware update sections. The old `/admin/8311/firmware` URL remains usable.
 The page uses the existing LuCI theme and includes Simplified Chinese strings.
+
+**Generate backup** downloads a private `8311-settings-*.env` file directly to
+the browser. It contains every supported 8311 setting, including PON identity,
+authentication and the root password override, plus the custom VLAN hook.
+Unset overrides are recorded as empty values, allowing an exact restore of
+the image defaults. SSH keys, TLS certificates, arbitrary filesystem changes,
+bootloader variables and unknown fields from other forks are not exported.
+The download requires an authenticated POST/token and is marked `no-store`.
+Treat the file as a credential; the page never renders its contents.
 
 Reset offers two scopes: keep PON identity/authentication (default), or also
 clear known PON settings. Both clear the other known 8311 overrides and the
@@ -79,20 +88,30 @@ and certificates are kept. This resets 8311-managed configuration, not arbitrary
 files or unknown settings from another fork. After reboot the management IP is
 `192.168.11.1` and the root password returns to the image's default.
 
-Configuration restore accepts plain-text `8311_key=value` files up to 64 KiB,
-including compatible `fwenvs_backup.env` files. It validates the entire file,
+Configuration restore accepts generated backups and plain-text
+`8311_key=value` files up to 128 KiB, including compatible `fwenvs_backup.env`
+files. Full restore includes PON settings, with an extra confirmation; choose
+**Keep current PON identity and authentication** when needed. This is separate
+from the reset scope, which defaults to preserving PON. It validates the entire file,
 previews changed field names without exposing credentials, and requires a
 separate confirmation. Missing fields are kept; an empty value removes an
 override. Unknown/duplicate keys, invalid values, bootloader variables and
 enabling persistent RootFS are rejected. CN-specific settings and generic
 OpenWrt backup archives are not supported. Disable persistent RootFS and reboot
-before using recovery. Imports and resets share the WebUI configuration and
+before using backup/recovery. The reserved `8311_backup_hook_b64` backup record
+stores the hook as canonical Base64, with a 64 KiB decoded limit. An empty
+record removes the hook; omitting it in a legacy file leaves the hook alone.
+Hook syntax is checked before any settings write, and installing a nonempty
+hook requires an additional browser confirmation. Restores replace a hook
+atomically only after the settings writes succeed. Imports and resets share the WebUI configuration and
 firmware locks, check each write, report partial failures, and never reboot
 automatically. Reboot is a separate action after success.
 
 Firmware updates continue to accept WAS-110 `local-upgrade.tar` packages with
 the existing dual-bank validation and installation flow. These are not generic
-ImmortalWrt/OpenWrt sysupgrade images. The distribution comparison and hardware
+ImmortalWrt/OpenWrt sysupgrade images. Normal upgrades keep the persistent 8311
+settings and VLAN hook; resetting settings is a separate, explicit action.
+The distribution comparison and hardware
 support evidence are in [immortalwrt-assessment.md](docs/immortalwrt-assessment.md).
 
 ## Building and testing
@@ -112,6 +131,23 @@ git submodule update --init
 when invoking `build.sh` from another directory. Missing option values, inputs,
 submodule files or required image tools fail before existing build output is
 removed. Use a Linux checkout to preserve the firmware's symlinks and modes.
+
+For changes to the basic variant's scripts and WebUI, an additional build path
+uses the **pinned public upstream v2.8.3 release** as its already-patched base:
+
+```sh
+sudo python3 tools/build_from_release.py \
+  --base stock/upstream-v2.8.3-local-upgrade.tar --output out/release
+```
+
+This produces `local-upgrade.tar`, component files, SHA256SUMS and a build
+manifest. It is a release-based rebuild, not a new vendor SDK/kernel build.
+The input tar and its components must match hardcoded upstream hashes. The
+builder overlays the committed source, compiles translations, preserves every
+ELF binary, kernel module and firmware blob, and compares all files, symlinks
+and modes after re-extracting the generated rootfs. Existing output directories
+are never replaced. CI performs this Linux build only after both regression
+variants pass, then stores a downloadable artifact; it never flashes a device.
 
 Offline regressions use fake UBI devices, environment writers, EEPROMs and LuCI
 services; they do not flash hardware or need proprietary stock images:
