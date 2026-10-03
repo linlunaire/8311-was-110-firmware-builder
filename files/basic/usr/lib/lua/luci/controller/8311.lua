@@ -21,7 +21,7 @@ local firmwareOutput = ''
 local supportOutput = ''
 
 local function acquire_lock(path)
-	local fd = nixio.open(path, "w", 384)
+	local fd = nixio.open(path, "w", "rw-------")
 	if not fd then return nil, 503 end
 	if not fd:lock("tlock") then
 		fd:close()
@@ -982,7 +982,7 @@ local function stage_recovery_hook(content)
 	if content == "" then return "" end
 	if not fs.mkdirr("/ptconf/8311", "rwx------") or not fs.chmod("/ptconf/8311", "rwx------") then return nil end
 	local path = recovery_hook_path .. ".restore." .. nixio.getpid()
-	local fd = nixio.open(path, nixio.open_flags("wronly", "creat", "excl"), 384)
+	local fd = nixio.open(path, nixio.open_flags("wronly", "creat", "excl"), "rw-------")
 	if not fd then return nil end
 	local ok = pcall(function()
 		local offset = 0
@@ -1156,13 +1156,13 @@ local firmware_actions = { validate = true, cancel = true, install = true,
 	install_reboot = true, reboot = true, switch_reboot = true }
 
 local function receive_firmware(path)
-	if not fs.mkdir(firmware_directory, 448) and
+	if not fs.mkdir(firmware_directory, "rwx------") and
 		(fs.lstat(firmware_directory, "type") ~= "dir" or fs.lstat(firmware_directory, "uid") ~= 0) then
 		return false, "Unable to create the upload directory."
 	end
 	if not fs.chmod(firmware_directory, "rwx------") then return false, "Unable to protect the upload directory." end
 	local temporary = path .. ".incoming." .. nixio.getpid()
-	local fd = nixio.open(temporary, nixio.open_flags("wronly", "creat", "excl"), 384)
+	local fd = nixio.open(temporary, nixio.open_flags("wronly", "creat", "excl"), "rw-------")
 	if not fd then return false, "Unable to create a temporary upload file." end
 	local size, metadata, complete, failure = 0, nil, false, nil
 	-- Authentication has parsed the multipart body. LuCI replays its temporary

@@ -15,6 +15,14 @@ local function check(name, fn)
 	print("ok - " .. name)
 end
 
+local function native_permissions(value)
+	if value == nil then return end
+	local mode = tostring(value)
+	-- Legacy nixio parses octal digits or chmod-style strings, not decimal bits.
+	assert(mode:match("^[0-7][0-7][0-7]$") or mode:match("^[0-7][0-7][0-7][0-7]$") or
+		mode:match("^[r-][w-][xsS-][r-][w-][xsS-][r-][w-][xtT-]$"), "invalid native nixio permission mode")
+end
+
 local function setup()
 	local s = { files = {}, directories = {}, reads = {}, closed = 0, calls = {}, processes = {}, writes = {}, text = "", status = 200, pon = "current=50", readback = "", rebooted = false }
 	local util = {
@@ -39,14 +47,14 @@ local function setup()
 			s.files[path] = content
 			return #content - (s.short_write and 1 or 0)
 		end,
-		mkdirr = function() return true end,
-		mkdir = function(path) s.directories[path] = true; return true end,
+		mkdirr = function(_, mode) native_permissions(mode); return true end,
+		mkdir = function(path, mode) native_permissions(mode); s.directories[path] = true; return true end,
 		lstat = function(path, field)
 			if not s.files[path] and not s.directories[path] then return nil end
 			local info = { type = s.directories[path] and "dir" or "reg", uid = 0 }
 			return field and info[field] or info
 		end,
-		chmod = function() return not s.fail_chmod end,
+		chmod = function(_, mode) native_permissions(mode); return not s.fail_chmod end,
 		rename = function(src, dest)
 			if s.fail_rename then return nil end
 			s.files[dest], s.files[src] = s.files[src], nil
@@ -102,10 +110,11 @@ local function setup()
 		getpid = function() return 123 end,
 		open_flags = function(...) return table.concat({...}, ",") end,
 		open = function(path, mode, permissions)
+			native_permissions(permissions)
 			if mode == "w" or mode:find("creat", 1, true) then
 				if s.fail_open then return nil end
 				if mode:find("excl", 1, true) and s.files[path] then return nil end
-				if path:find(".incoming.", 1, true) then assert(permissions == 384) end
+				if path:find(".incoming.", 1, true) then assert(permissions == "rw-------" or tostring(permissions) == "600") end
 				s.files[path] = ""
 			end
 			if not s.files[path] then return nil end
