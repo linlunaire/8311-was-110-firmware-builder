@@ -204,11 +204,11 @@ vlan_parse() {
 	treatment_inner_tpid_dei=$(($4 & 0x00000007))
 
 	if $TABLE; then
-		echo -ne "${filter_outer_priority}\t${filter_outer_vid}\t${filter_outer_tpid_dei}\t"
-		echo -ne "${filter_inner_priority}\t${filter_inner_vid}\t${filter_inner_tpid_dei}\t${filter_ethertype}\t${filter_extended_criteria}\t"
-		echo -ne "${treatment_remove_tags}\t${treatment_outer_priority}\t${treatment_outer_vid}\t${treatment_outer_tpid_dei}\t"
-		echo -ne "${treatment_inner_priority}\t${treatment_inner_vid}\t${treatment_inner_tpid_dei}"
-		echo
+		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+			"$filter_outer_priority" "$filter_outer_vid" "$filter_outer_tpid_dei" \
+			"$filter_inner_priority" "$filter_inner_vid" "$filter_inner_tpid_dei" "$filter_ethertype" "$filter_extended_criteria" \
+			"$treatment_remove_tags" "$treatment_outer_priority" "$treatment_outer_vid" "$treatment_outer_tpid_dei" \
+			"$treatment_inner_priority" "$treatment_inner_vid" "$treatment_inner_tpid_dei"
 	else
 		echo -ne "Filter Outer Priority:\t\t"
 		filter_priority o $filter_outer_priority
@@ -260,8 +260,8 @@ for ext_vlan_table in $ext_vlan_tables; do
 		echo "Extended VLAN table $ext_vlan_table"
 		echo "------------------------"
 		if $TABLE; then
-			echo -e "Filter Outer\t\tFilter Inner\t\tFilter Other\tTreatment Outer\t\t\tTreatment Inner"
-			echo -e "Prio\tVID\tTPIDDEI\tPrio\tVID\tTPIDDEI\tEthTyp\tExtCrit\tTagRem\tPrio\tVID\tTPIDDEI\tPrio\tVID\tTPIDDEI"
+			printf 'Filter Outer\t\tFilter Inner\t\tFilter Other\tTreatment Outer\t\t\tTreatment Inner\n'
+			printf 'Prio\tVID\tTPIDDEI\tPrio\tVID\tTPIDDEI\tEthTyp\tExtCrit\tTagRem\tPrio\tVID\tTPIDDEI\tPrio\tVID\tTPIDDEI\n'
 		fi
 	fi
 	[ "$i" -gt 0 ] && echo
