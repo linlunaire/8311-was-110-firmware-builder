@@ -14,23 +14,44 @@
 - 配置值与默认值的原生对比一致，现有 7 条 VLAN 规则解析不变。上述源码
   对比在设备 RAM 或主机隔离环境中完成，没有通过测量保存配置。
 
-源码 [`22d4285`](https://github.com/linlunaire/8311-was-110-firmware-builder/commit/22d4285deb88bf23665749dc5423621b19783d28)
-的 [Linux CI 37138753599](https://github.com/linlunaire/8311-was-110-firmware-builder/actions/runs/37138753599)
-全部通过：sh / BusyBox 各 80 项，Chromium / Firefox / WebKit 各 31 组，
+最终源码 [`e9678a5`](https://github.com/linlunaire/8311-was-110-firmware-builder/commit/e9678a5f602ec483b8d296eaca9328904996c218)
+的 [Linux CI 37140280936](https://github.com/linlunaire/8311-was-110-firmware-builder/actions/runs/37140280936)
+全部通过：sh / BusyBox 各 84 项，Chromium / Firefox / WebKit 各 31 组，
 ShellCheck error 级别、状态轮询及 basic 固件构建通过。
 
-artifact `11279727359` 的 ZIP SHA-256 为
-`0b801907f52ae462a161ccc1478f33ade08dc1b944b153d0365d79486963abab`。
+artifact `11279953068` 的 ZIP SHA-256 为
+`1ca2715f7362db276eab2389b01572645efa6eccde34c3844760ae38e4318443`。
 7 项 SHA256SUMS、归档成员、control 尺寸与哈希、构建 manifest 均核对通过；
 270 项受保护二进制不变，rootfs 重解包一致。镜像中的 50 个脚本、模块与网页
 资源逐字节匹配该提交，简中 LMO 匹配源码编译结果，共 51 项。
 RootFS 为 6,213,632 字节，升级包 SHA-256 为
-`72c6275765b329554794a3c9abc0450145960495c14fdf9ffecb461483e54f6a`。
-现有 A / B 容量足够，无需调整 UBI 卷大小。B 试启动后的新增 HTTPS 检查
+`56954028e3940581aa170eda8ca8b88b26ef631e2890782617be8d44655291d1`。
+现有 A / B 容量足够，无需调整 UBI 卷大小。
+
+首次 `22d4285` 已通过当时的 80 项及浏览器门禁，但 B 试启动后的新增 HTTPS 检查
 发现：未接光纤、没有 OMCI 扩展 VLAN 表时，旧解码器返回 1，被有错误检查的
 新接口识别为 503。因此没有确认该 B 为默认槽。新增 4 项回归先复现空表误报、
 管道及 `local` 赋值掩盖读取失败，再验证修正；目标 BusyBox 在 RAM 载入修正
-源码后，两种解码模式均返回成功的空表提示。最终构建与部署待该修正通过门禁。
+源码后，两种解码模式均返回成功的空表提示。随后 Linux sh 检查暴露旧表格
+输出依赖 `echo -e` 的问题；改为 `printf` 后，两种 shell 均通过。目标 BusyBox
+对非空样本的 15 列输出在修改前后逐字节一致。期间实际退出未确认试启动，
+返回仍为默认槽的原 A。
+
+最终 `e9678a5` 已完成 B 安装、三个组件独立读回及完整槽检查。B 试启动时保留
+默认 A，51 项镜像文件与已验证产物一致；其中首次启动后会被 OpenWrt 消耗的
+`zzz-8311` 从 `/rom` 校验并确认运行路径已移除，其他 50 项同时校验运行路径且
+没有 overlay 替换文件。HTTPS 检查全部通过后，实际确认并读回默认 B。
+
+实际 HTTPS 检查包括 4305 字节备份及原文件恢复预览（0 项变化）、私密下载
+响应头、配置与 Hook 读取、PON / ME / VLAN 接口、非法诊断参数拒绝、两接口
+计数与 7 条现有规则。无扩展 VLAN 表时正常返回提示；规则折叠时只读取摘要。
+备份和预览前后 `/ptconf/8311` 的权限及修改/变更时间相同，暂存文件已清理；
+8311 配置、Hook 内容及 UBI 卷结构均未改变。
+
+继续安装 A 时，在写入前的 B 全卷哈希检查阶段发生 SSH 连接超时。
+本地记录仍为 `b_committed`，尚未开始 A 的上传或写入。最后在线确认的运行槽
+和默认槽均为 B / `e9678a5`。A 更新、最终 A 确认和 B 清空尚未完成，待管理
+连接恢复后继续；不能把这部分记为通过。
 
 ## 查询开销与三浏览器引擎检查
 
