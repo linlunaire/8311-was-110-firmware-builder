@@ -126,12 +126,14 @@ const server = http.createServer(async (req, res) => {
       document.getElementById('save-btn').disabled = true;
       window.dispatchEvent(new PageTransitionEvent('pageshow'));
     });
+    await page.waitForFunction(() => document.querySelector('[name="internet_vlan"]').value === '100');
     assert.equal(await page.locator('[name="internet_vlan"]').inputValue(), '100');
     assert.equal(await page.locator('[name="fix_vlans"]').inputValue(), '1');
     assert(await page.locator('#save-btn').isEnabled());
     assert.equal(requests.length, 0);
     await page.locator('[name="internet_vlan"]').fill('202');
     await page.reload();
+    await page.waitForLoadState('networkidle');
     assert.equal(await page.locator('[name="internet_vlan"]').inputValue(), '100');
     assert.equal(requests.length, 0);
     console.log('ok - restored and reloaded unsaved fields show server values without a write');
@@ -152,6 +154,7 @@ const server = http.createServer(async (req, res) => {
     await page.locator('[name="internet_vlan"]').fill('123');
     await page.locator('#save-btn').click();
     await page.waitForFunction(() => document.querySelector('[name="internet_vlan"]').defaultValue === '123');
+    await page.waitForLoadState('networkidle');
     assert.equal(navigationCount, 1);
     assert.equal(await page.getByRole('status').textContent(), 'Saved fixture settings');
     page.off('framenavigated', onNavigate);
@@ -414,6 +417,7 @@ const server = http.createServer(async (req, res) => {
         assert(!await mask.evaluate(input => input.checkValidity()), value);
       }
       await page.reload();
+      await page.waitForLoadState('networkidle');
       assert.equal(await mask.inputValue(), '255.255.255.0');
       assert.equal(requests.length, beforeNative);
       console.log('ok - native configuration DOM renders VLAN status, validates all mask prefixes and discards unsaved edits');

@@ -339,12 +339,16 @@ $(document).ready(function () {
 		$(configForm).on('input change', function () {
 			$('#config-save-message').text(configForm.dataset.unsaved).show();
 		});
-		window.addEventListener('pageshow', function (event) {
-			if (event.persisted) { window.location.reload(); return; }
-			// Firefox can restore unsaved controls even when the HTML is fresh.
+		function resetConfigFields() {
 			configForm.reset();
 			$('#save-btn').prop('disabled', false).removeClass('spinning');
-			if (fixVlansSelect.length) toggleVlanFields();
+			if (fixVlansSelect && fixVlansSelect.length) toggleVlanFields();
+		}
+		// Ready may run after pageshow; restored controls need a subsequent task.
+		setTimeout(resetConfigFields, 0);
+		window.addEventListener('pageshow', function (event) {
+			if (event.persisted) { window.location.reload(); return; }
+			setTimeout(resetConfigFields, 0);
 		});
 		try {
 			var result = sessionStorage.getItem('8311-config-result');
