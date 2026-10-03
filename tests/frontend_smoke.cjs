@@ -13,6 +13,7 @@ let backupContentType = 'text/plain; charset=utf-8';
 let configuredInternetVlan = '100';
 let holdRequests = false;
 let holdBackupBody = false;
+let hookReadStatus = 200;
 const html = `<!doctype html><meta charset="utf-8">
 <style>[data-tab]:not(li):not([data-tab-active]){display:none}</style>
 <ul><li class="cbi-tab" data-tab="pon">PON</li><li class="cbi-tab-disabled" data-tab="vlans">VLAN</li></ul>
@@ -31,7 +32,7 @@ data-unsaved="Unsaved changes" data-timeout="Request timed out; reload to check 
 <div id="hook-script-modal" style="display:none"><p id="hook-script-message"></p>
 <textarea id="hook-script-textarea"></textarea><button id="hook-script-save-btn">Save hook</button>
 <button id="hook-script-cancel-btn">Cancel hook</button></div>
-<script>var translations={hookScriptSaved:'Hook saved',hookScriptSaveFailed:'Hook failed',
+<script>var translations={hookScriptSaved:'Hook saved',hookScriptSaveFailed:'Hook failed',hookScriptLoadFailed:'Hook load failed',
 unsavedChanges:'Unsaved changes',requestTimedOut:'Request timed out; reload to check saved settings'};</script>
 <script src="/jquery.js"></script><script src="/8311.js"></script>`;
 
@@ -94,6 +95,7 @@ const server = http.createServer(async (req, res) => {
       { success: true, message: 'Saved fixture settings' }) :
       { success: false, message: 'Invalid fixture settings', errors: { internet_vlan: 'Rejected VLAN' } }));
   } else if (req.url === '/get_hook_script') {
+    res.writeHead(hookReadStatus);
     res.end('# fixture hook');
   } else if (req.url.startsWith('/vlan_status')) {
     res.setHeader('Content-Type', 'application/json');
@@ -399,6 +401,34 @@ const server = http.createServer(async (req, res) => {
     await page.waitForFunction(() => !document.querySelector('button[onclick*="backupSettings"]').disabled);
     assert.deepEqual(errors, []);
     console.log('ok - backup failure shows feedback and re-enables download and firmware controls');
+
+    for (const blockedStorage of [false, true]) {
+      const isolated = await browser.newPage();
+      isolated.on('pageerror', error => errors.push(error.message));
+      await isolated.addInitScript(blocked => {
+        if (blocked) Object.defineProperty(window, 'localStorage', { get() { throw new DOMException('Blocked', 'SecurityError'); } });
+        else localStorage.setItem('activeConfigTab', '\"]');
+      }, blockedStorage);
+      await isolated.goto(`http://127.0.0.1:${server.address().port}/`);
+      await isolated.waitForLoadState('networkidle');
+      assert.equal(await isolated.locator('li.cbi-tab').getAttribute('data-tab'), 'pon');
+      hookReadStatus = 503;
+      await isolated.locator('#edit-hook-script-btn').click();
+      await isolated.locator('#hook-script-message').filter({hasText:'Hook load failed'}).waitFor();
+      assert(await isolated.locator('#hook-script-save-btn').isDisabled());
+      assert.equal(await isolated.locator('#hook-script-textarea').inputValue(), '');
+      hookReadStatus = 200;
+      await isolated.locator('#hook-script-cancel-btn').click();
+      status = 400;
+      const beforeSave = requests.length;
+      await isolated.locator('#save-btn').click();
+      await isolated.locator('#config-save-message').filter({hasText:'Invalid fixture settings'}).waitFor();
+      assert.equal(requests.length, beforeSave + 1);
+      await isolated.close();
+    }
+    status = 200;
+    assert.deepEqual(errors, []);
+    console.log('ok - blocked storage and invalid saved tabs do not break editing or saving; unread hooks cannot be overwritten');
 
     if (nativeConfigHtml) {
       const beforeNative = requests.length;

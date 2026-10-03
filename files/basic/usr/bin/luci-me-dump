@@ -1,2 +1,3 @@
 #!/bin/sh
-omci_pipe.sh md | sed -r 's#^(\|\s+(\d+)\s+\|\s+(\d+)\s+.+)$#<a href="\#" onclick="showPonMe(\2, \3); return false;">\1</a>#g'
+dump=$(omci_pipe.sh md) || exit 1
+printf '%s\n' "$dump" | sed -r 's/\&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s#^(\|\s+([0-9]+)\s+\|\s+([0-9]+)\s+.+)$#<a href="\#" onclick="showPonMe(\2, \3); return false;">\1</a>#g'

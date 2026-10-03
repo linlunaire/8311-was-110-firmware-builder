@@ -1,4 +1,10 @@
 #!/bin/sh
+set -e
+umask 077
+
+# Share the installer's lock: never mount a bank while it is being written.
+exec 9>/tmp/8311-firmware-upgrade.lock
+flock -n 9 || exit 1
 
 if [ -f "/tmp/8311-alt-firmware" ]; then
 	cat "/tmp/8311-alt-firmware"
@@ -25,6 +31,15 @@ MTDALTBLOCK="/dev/$MTDALTROOT"
 
 MNTDIR=$(mktemp -d /tmp/XXXXXX)
 [ -z "$MNTDIR" ] && _err "Failed to create mount directory!"
+STAGED=
+cleanup() {
+	umount "$MNTDIR" 2>/dev/null || true
+	rmdir "$MNTDIR" 2>/dev/null || true
+	rm -f "$STAGED"
+}
+trap cleanup 0
+trap 'exit 1' HUP INT TERM
+STAGED=$(mktemp /tmp/8311-alt-firmware.XXXXXX)
 
 FW_VARIANT="unknown"
 FW_VERSION="unknown"
@@ -39,7 +54,7 @@ STATEOV="$MNTDIR/www/html/stateOverview_ct.html"
 BANNER="$MNTDIR/etc/banner"
 
 if [ -f "$VER_8311" ]; then
-	cat "$VER_8311" > "/tmp/8311-alt-firmware"
+	cat "$VER_8311" > "$STAGED"
 else
 	if [ -f "$STATEOV" ]; then
 		BFW_VER=$(grep -A1 8311modver "$STATEOV" | grep -E '<td>\S+ \(\S+)</td>' | sed -r 's#\s*</?td>##g' | tr '()' '  ')
@@ -54,20 +69,20 @@ else
 		VER=$(grep -E -o '8311 Community Firmware MOD \[\S+\] - \S+ \(\S+)' "$BANNER" | tr '[]()' '    ')
 		if [ -n "$VER" ]; then
 			FW_VARIANT=$(echo "$VER" | awk '{print $5}')
-			FW_VERSION=$(echo "$VER" | awk '{print $6}')
-			FW_REVISION=$(echo "$VER" | awk '{print $7}')
+			FW_VERSION=$(echo "$VER" | awk '{print $7}')
+			FW_REVISION=$(echo "$VER" | awk '{print $8}')
 		else
 			VER=$(grep -E -o '8311 Community Firmware MOD - \S+ \(\S+)' "$BANNER" | tr '[]()' '    ')
 			if [ -n "$VER" ]; then
 				FW_VARIANT="bfw"
-				FW_VERSION=$(echo "$BFW_VER" | awk '{print $5}')
-				FW_REVISION=$(echo "$BFW_VER" | awk '{print $6}')
+				FW_VERSION=$(echo "$VER" | awk '{print $6}')
+				FW_REVISION=$(echo "$VER" | awk '{print $7}')
 			fi
 		fi
 	fi
 
 	if [ "$FW_VARIANT" = "unknown" ] && [ -f "$SYSINFO" ]; then
-		BFW_VER=$(uci -c "$PTCONF" -q get sysinfo_conf.SoftwareVersion.value)
+		BFW_VER=$(uci -c "$PTCONF" -q get sysinfo_conf.SoftwareVersion.value || true)
 		if [ -n "$BFW_VER" ]; then
 			FW_VARIANT="bfw_stock"
 			FW_VERSION="$BFW_VER"
@@ -75,13 +90,9 @@ else
 		fi
 	fi
 
-	echo "FW_VARIANT=$FW_VARIANT" > "/tmp/8311-alt-firmware"
-	echo "FW_VERSION=$FW_VERSION" >> "/tmp/8311-alt-firmware"
-	echo "FW_REVISION=$FW_REVISION" >> "/tmp/8311-alt-firmware"
+	printf 'FW_VARIANT=%s\nFW_VERSION=%s\nFW_REVISION=%s\n' "$FW_VARIANT" "$FW_VERSION" "$FW_REVISION" > "$STAGED"
 fi
 
-umount "$MNTDIR" 2>/dev/null
-rmdir "$MNTDIR" 2>/dev/null
-
+mv "$STAGED" /tmp/8311-alt-firmware
 cat "/tmp/8311-alt-firmware"
 exit 0

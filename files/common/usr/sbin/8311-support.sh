@@ -2,10 +2,12 @@
 set -e
 umask 077
 RAW=false
+DELETE=false
 case "${1-}" in
 	--raw) [ $# -eq 1 ] || exit 1; RAW=true ;;
+	--delete) [ $# -eq 1 ] || exit 1; DELETE=true ;;
 	-h|--help)
-		echo "Usage: $0 [--raw]"
+		echo "Usage: $0 [--raw|--delete]"
 		echo "Default: redacted environment and VLAN tables; --raw includes credentials, logs and OMCI dumps."
 		exit 0
 	;;
@@ -15,9 +17,10 @@ esac
 
 exec 9>/tmp/8311-support.lock
 flock -n 9 || { echo "Support archive generation already in progress." >&2; exit 1; }
+OUT="/tmp/support.tar.gz"
+if $DELETE; then rm -f "$OUT"; exit 0; fi
 echo "Generating support archive ..."
 echo
-OUT="/tmp/support.tar.gz"
 TMPDIR=$(mktemp -d /tmp/8311-support.XXXXXX)
 trap 'rm -rf "$TMPDIR"' 0
 trap 'exit 1' HUP INT TERM
@@ -29,7 +32,7 @@ rm -f "$OUT"
 
 echo -n "Dumping FW ENVs ..."
 # Check the reader before the pipeline so an error cannot become an empty success.
-fw_printenv > "$TMPDIR/fwenvs.txt"
+timeout -k 1 5 fw_printenv > "$TMPDIR/fwenvs.txt"
 if $RAW; then
 	sort -V "$TMPDIR/fwenvs.txt" > "$OUTDIR/fwenvs.txt"
 else
@@ -51,31 +54,31 @@ echo " done"
 if $RAW; then
 	echo -n "Dumping pontop pages ..."
 	rm -f "/tmp/pontop.txt"
-	pontop -b > /dev/null
+	timeout -k 1 15 pontop -b > /dev/null
 	mv "/tmp/pontop.txt" "$OUTDIR/"
 	echo " done"
 
 	echo -n "Dumping OMCI MEs ..."
-	omci_pipe.sh md > "$OUTDIR/omci_pipe_md.txt"
-	omci_pipe.sh mda > "$OUTDIR/omci_pipe_mda.txt"
+	timeout -k 1 15 omci_pipe.sh md > "$OUTDIR/omci_pipe_md.txt"
+	timeout -k 1 15 omci_pipe.sh mda > "$OUTDIR/omci_pipe_mda.txt"
 	echo " done"
 fi
 
 echo -n "Dumping VLAN tables ..."
-8311-extvlan-decode.sh -t > "$OUTDIR/extvlan-tables.txt"
+timeout -k 1 5 8311-extvlan-decode.sh -t > "$OUTDIR/extvlan-tables.txt"
 {
 	printf "\n\n"
-	8311-extvlan-decode.sh
+	timeout -k 1 5 8311-extvlan-decode.sh
 } >> "$OUTDIR/extvlan-tables.txt"
 echo " done"
 
 if $RAW; then
 	echo -n "Dumping TC Filters ..."
-	8311-tc-filter-dump.sh > "$OUTDIR/tc_filters.txt"
+	timeout -k 1 10 8311-tc-filter-dump.sh > "$OUTDIR/tc_filters.txt"
 	echo " done"
 
 	echo -n "Dumping System Log ..."
-	logread > "$OUTDIR/system_log.txt"
+	timeout -k 1 5 logread > "$OUTDIR/system_log.txt"
 	echo " done"
 fi
 

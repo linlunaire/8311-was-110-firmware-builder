@@ -101,12 +101,11 @@ class LmoEntry:
 
 
 class Lmo:
-  entries = []  # list of LmoEntry
-
   def __init__(self, verbose = 0):
     self.verbose = verbose
     self.skip_dup = False
     self.entries = []
+    self.entries_by_key = {}
     self.msg = Msg()
 
   def add_entry(self, key_id, plural, val):
@@ -116,13 +115,14 @@ class Lmo:
     entry.offset = len(self.entries)
     entry.length = len(val)
     entry.val = val
-    ent = next((ent for ent in self.entries if ent.key_id == key_id), None)
+    ent = self.entries_by_key.get(key_id)
     if ent:
       if self.skip_dup:
         return None  # skip duplicate
       entry.dup = 1
       ent.dup = 1
     self.entries.append(entry)
+    self.entries_by_key.setdefault(key_id, entry)
     return entry
 
   def print_msg(self):
@@ -224,6 +224,7 @@ class Lmo:
 
   def load_from_text(self, filename):
     self.entries = []
+    self.entries_by_key = {}
     self.msg.init(-1)
     with open(filename, "r", encoding='UTF-8') as file:
       for line in file:
@@ -233,9 +234,12 @@ class Lmo:
 
   def load_from_list(self, entries):
     self.entries = entries
+    self.entries_by_key = {}
+    for entry in entries:
+      self.entries_by_key.setdefault(entry.key_id, entry)
 
   def save_to_bin(self, filename = None):
-    buf = bytearray(b'\x00' * 0x400000)  # 4MiB
+    buf = bytearray()
     offset = 0
     elst = []  # new list of LmoEntry()
     for i, ent in enumerate(self.entries):
@@ -249,7 +253,9 @@ class Lmo:
       elst.append(ek)
       offset += length
       if offset & 3 != 0:
-        offset += 4 - (offset & 3)
+        padding = 4 - (offset & 3)
+        buf.extend(b'\x00' * padding)
+        offset += padding
     elst = sorted(elst, key=lambda x: x.key_id)
     #if offset & 0xF != 0:
     #  offset += 0x10 - (offset & 0xF)

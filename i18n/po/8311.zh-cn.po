@@ -1037,3 +1037,9 @@ msgstr "丢包"
 
 msgid "VLAN monitor"
 msgstr "VLAN 监控"
+
+msgid "Loading..."
+msgstr "正在加载…"
+
+msgid "Unable to load diagnostics. Retry shortly."
+msgstr "无法读取诊断信息，请稍后重试。"

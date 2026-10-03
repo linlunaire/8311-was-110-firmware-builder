@@ -7,3 +7,5 @@
 *.yml text eol=lf
 files/common/usr/sbin/fwenv_get text eol=lf
 files/common/usr/sbin/fwenv_set text eol=lf
+files/common/usr/sbin/alternate_firmware_info text eol=lf
+files/basic/usr/bin/luci-me-dump text eol=lf

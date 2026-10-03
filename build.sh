@@ -165,7 +165,16 @@ else
 	_err "Must specify --basic-image-dir"
 fi
 
-# Fail before deleting an earlier build when required inputs or tools are absent.
+# Inputs must survive replacement of generated images and extraction trees.
+for INPUT in "$IMG_FILE" "$IMG_DIR"; do
+	case "$INPUT/" in
+		"$OUT_DIR/"*|"$BASE_DIR/rootfs/"*|"$BASE_DIR/rootfs-basic/"*|"$BASE_DIR/rootfs-bfw/"*)
+			_err "Input '$INPUT' is inside a generated build directory. Move stock inputs outside it."
+		;;
+	esac
+done
+
+# Fail before replacing build products when required inputs or tools are absent.
 for FILE in bootcore.bin kernel.bin rootfs.img; do
 	[ -f "$IMG_DIR/$FILE" ] || _err "Basic image file '$IMG_DIR/$FILE' does not exist."
 done
@@ -179,7 +188,7 @@ if $RELEASE; then
 	command -v 7z >/dev/null 2>&1 || _err "Required release tool '7z' not found."
 fi
 
-rm -rfv "$OUT_DIR"
+# Keep unrelated releases and verification records in out/.
 mkdir -pv "$OUT_DIR"
 
 KERNEL_BFW="$OUT_DIR/kernel-bfw.bin"

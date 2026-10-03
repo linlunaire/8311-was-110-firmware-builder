@@ -68,10 +68,32 @@ function fwenv_get(key, default, _8311, base64)
 	return string.gsub(util.exec("fwenv_get " .. _8311_arg .. base64_arg .. util.shellquote(key) .. default_arg), '[\r\n]+$', "")
 end
 
-function fw_getenvs_8311()
+function read_command(command, limit)
+	limit = limit or 131072
+	local chunks, size = {}, 0
+	local result = sys.process.exec(command, function(chunk)
+		size = size + #chunk
+		if size <= limit then table.insert(chunks, chunk) end
+	end)
+	if not result or result.code ~= 0 or size > limit then return nil end
+	return table.concat(chunks)
+end
+
+function read_fwenvs()
+	local raw = read_command({ "/usr/bin/timeout", "-k", "1", "5", "/usr/sbin/fw_printenv" })
+	if not raw then return nil end
+	local values = {}
+	for key, value in ("\n" .. raw):gmatch("\n([^\r\n=]+)=([^\r\n]*)") do values[key] = value end
+	return values
+end
+
+function fw_getenvs_8311(snapshot)
+	snapshot = snapshot or read_fwenvs()
+	if not snapshot then return nil end
 	local fwenvs = {}
-	for k, v in string.gmatch(util.exec('echo ; fw_printenv | grep "^8311_"'), '\n8311_([^\n=]+)=([^\r\n]+)') do
-		fwenvs[k] = v
+	for key, value in pairs(snapshot) do
+		local id = key:match("^8311_([%w_]+)$")
+		if id then fwenvs[id] = value end
 	end
 
 	return fwenvs
@@ -165,16 +187,12 @@ function link_diagnostics(include_rules)
 		if link.available and include_rules ~= false then
 			link.rules_available = true
 			for _, direction in ipairs(device == "eth0_0" and { "ingress", "egress" } or { "egress" }) do
-				local chunks, size = {}, 0
-				local result = sys.process.exec({ "/usr/bin/timeout", "-k", "1", "2", "/sbin/tc", "-s", "filter", "show", "dev", device, direction }, function(chunk)
-					size = size + #chunk
-					if size <= 65536 then table.insert(chunks, chunk) end
-				end)
-				if not result or result.code ~= 0 or size > 65536 then
+				local output = read_command({ "/usr/bin/timeout", "-k", "1", "2", "/sbin/tc", "-s", "filter", "show", "dev", device, direction }, 65536)
+				if not output then
 					link.rules_available = false
 				else
 					local rule, first_action
-					for line in (table.concat(chunks) .. "\n"):gmatch("([^\n]*)\n") do
+					for line in (output .. "\n"):gmatch("([^\n]*)\n") do
 						if line:match("^filter ") then
 							rule, first_action = nil, false
 							local protocol, pref, handle = line:match("^filter protocol (%S+) pref (%d+) flower handle (%S+)")

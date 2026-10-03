@@ -68,7 +68,7 @@ _mib_file() {
 _mib_update() {
 	local ME="$1"
 	local PARAM="$2"
-	local VALUE="$3"
+	local VALUE=$(printf '%s' "$3" | sed 's/[\\&#]/\\&/g')
 	local P='("[^"]*"|[^"]\S*)'
 
 	sed -r "s#^(([!?]\s+)?${ME}(\s+$P){${PARAM}}\s+)($P)#\1${VALUE}#g" -i "$(_mib_file)"
@@ -182,13 +182,13 @@ get_8311_sw_ver() {
 	local i2="B"
 	
 	{ [ "$1" = "A" ] || [ "$1" = "B" ]; } && i1="$1"
-	[ "$image1" = "B" ] && i2="A"
+	[ "$i1" = "B" ] && i2="A"
 	
 	{ fwenv_get_8311 "sw_ver$i1" || fwenv_get_8311 "sw_ver" || fwenv_get_8311 "sw_ver$i2"; } | head -c 14
 }
 
 set_8311_sw_ver() {
-	[ "$1" != "A" ] && [ "$1" != "B" ] && [ -z "$2" ] && return 1
+	{ [ "$1" = "A" ] || [ "$1" = "B" ]; } && [ -n "$2" ] || return 1
 
 	echo "Setting PON image $1 version: $2" | to_console
 	_set_8311_sw_ver "$1" "$2"
@@ -220,7 +220,7 @@ set_8311_hw_ver() {
 	_set_8311_hw_ver "$1"
 
 	local sync_cp_hwver=$(get_8311_cp_hw_ver_sync)
-	if [ "$(get_8311_cp_hw_ver_sync)" -eq 1 ] 2>/dev/null; then
+	if [ "$sync_cp_hwver" -eq 1 ] 2>/dev/null; then
 		set_8311_cp_hw_ver_sync "$1"
 	fi
 }

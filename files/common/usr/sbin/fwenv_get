@@ -54,13 +54,13 @@ done
 NAME="$PREFIX$NAME$SUFFIX"
 
 if VALUE=$(fw_printenv -n -- "$NAME" 2>/dev/null) && [ -n "$VALUE" ] && $B64; then
-	VALUE=$(echo "$VALUE" | base64 -d 2>/dev/null) || VALUE=
+	VALUE=$(printf '%s' "$VALUE" | base64 -d 2>/dev/null) || VALUE=
 fi
 
 if [ -n "$VALUE" ]; then
-	echo "$VALUE"
+	printf '%s\n' "$VALUE"
 	true
 else
-	[ -n "$DEFAULT" ] && echo "$DEFAULT"
+	[ -n "$DEFAULT" ] && printf '%s\n' "$DEFAULT"
 	false
 fi

@@ -5,7 +5,7 @@ _lib_int() {
 
 int8() {
 	int=$(($1 & 0xff))
-	[ "$int" -gt $((0x80)) ] && echo $((int - 0x100)) || echo $int
+	[ "$int" -ge $((0x80)) ] && echo $((int - 0x100)) || echo $int
 }
 
 uint8() {

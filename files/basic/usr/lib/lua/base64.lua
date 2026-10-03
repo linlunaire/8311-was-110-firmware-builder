@@ -2,11 +2,16 @@
 -- Lua 5.1+ base64 v3.0 (c) 2009 by Alex Kloss <alexthkloss@web.de>
 -- licensed under the terms of the LGPL2
 
+-- The device already ships nixio's native codec. Keep the portable implementation
+-- for standalone Lua tools and tests, without adding functions to the global table.
+local available, nixio = pcall(require, 'nixio')
+local native = available and nixio.bin
+
 -- character table string
 local b='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 
 -- encoding
-function enc(data)
+local function enc(data)
 	return ((data:gsub('.', function(x) 
 		local r,b='',x:byte()
 		for i=8,1,-1 do r=r..(b%2^i-b%2^(i-1)>0 and '1' or '0') end
@@ -20,7 +25,7 @@ function enc(data)
 end
 
 -- decoding
-function dec(data)
+local function dec(data)
 	data = string.gsub(data, '[^'..b..'=]', '')
 	return (data:gsub('.', function(x)
 		if (x == '=') then return '' end
@@ -36,16 +41,16 @@ function dec(data)
 end
 
 -- command line if not called as library
-if (arg ~= nil) then
+local M = { enc = native and native.b64encode or enc, dec = native and native.b64decode or dec }
+if arg and type(arg[0]) == 'string' and arg[0]:match('base64%.lua$') then
 	local func = 'enc'
 	for n,v in ipairs(arg) do
 		if (n > 0) then
 			if (v == "-h") then print "base64.lua [-e] [-d] text/data" break
 			elseif (v == "-e") then func = 'enc'
 			elseif (v == "-d") then func = 'dec'
-			else print(_G[func](v)) end
+			else print(M[func](v)) end
 		end
 	end
-else
-	module('base64',package.seeall)
 end
+return M

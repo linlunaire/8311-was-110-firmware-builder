@@ -196,7 +196,7 @@ function language_change(value)
 	return sys.call("uci set luci.main.lang=" .. util.shellquote(value ~= "" and value or "auto") .. " && uci commit luci") == 0
 end
 
-function fwenvs_8311(with_defaults)
+function fwenvs_8311(with_defaults, snapshot)
 	-- Backups and restore validation need field constraints, not display defaults.
 	with_defaults = with_defaults ~= false
 	local timezones, seen = {}, { UTC = true }
@@ -269,14 +269,14 @@ function fwenvs_8311(with_defaults)
 					description=translate("Image specific software version sent in the Software image MEs [7] (up to 14 characters)."),
 					maxlength=14,
 					type="text",
-					default=with_defaults and tools.fw_getenv{"img_versionA"} or nil
+					default=with_defaults and (snapshot and (snapshot.img_versionA or "") or tools.fw_getenv{"img_versionA"}) or nil
 				},{
 					id="sw_verB",
 					name=translate("Software Version B"),
 					description=translate("Image specific software version sent in the Software image MEs [7] (up to 14 characters)."),
 					maxlength=14,
 					type="text",
-					default=with_defaults and tools.fw_getenv{"img_versionB"} or nil
+					default=with_defaults and (snapshot and (snapshot.img_versionB or "") or tools.fw_getenv{"img_versionB"}) or nil
 				},{
 					id="fw_match_b64",
 					name=translate("Firmware Version Match"),
@@ -690,19 +690,14 @@ function fwenvs_8311(with_defaults)
 end
 
 function action_pontop(page)
-	local cmd
-
 	page = page or "status"
-
 	local pages = pontop_pages()
-
-	if not pages[page] then
-		return false
-	end
-
-	cmd = { "/usr/bin/pontop", "-g", pages[page], "-b" }
-	luci.http.prepare_content("text/plain; charset=utf-8")
-	luci.sys.process.exec(cmd, luci.http.write)
+	if not pages[page] then http.status(400, "Unknown diagnostic page"); return end
+	local output = tools.read_command({ "/usr/bin/timeout", "-k", "1", "10", "/usr/bin/pontop", "-g", pages[page], "-b" })
+	http.header("Cache-Control", "no-store")
+	if not output then http.status(503, "Diagnostic read failed"); return end
+	http.prepare_content("text/plain; charset=utf-8")
+	http.write(output)
 end
 
 function action_pon_status()
@@ -825,18 +820,56 @@ function action_vlans()
 end
 
 function action_vlan_extvlans()
-	luci.http.prepare_content("text/plain; charset=utf-8")
+	local tables = tools.read_command({ "/usr/bin/timeout", "-k", "1", "5", "/usr/sbin/8311-extvlan-decode.sh", "-t" })
+	local rules = tables and tools.read_command({ "/usr/bin/timeout", "-k", "1", "5", "/usr/sbin/8311-extvlan-decode.sh" })
+	http.header("Cache-Control", "no-store")
+	if not rules then http.status(503, "Diagnostic read failed"); return end
+	http.prepare_content("text/plain; charset=utf-8")
+	http.write(tables .. "\n\n" .. rules)
+end
 
-	if luci.sys.process.exec({"/usr/sbin/8311-extvlan-decode.sh", "-t"}, luci.http.write, luci.http.write).code == 0 then
-		luci.http.write("\n\n")
-		luci.sys.process.exec({"/usr/sbin/8311-extvlan-decode.sh"}, luci.http.write, luci.http.write)
+local recovery_hook_path = "/ptconf/8311/vlan_fixes_hook.sh"
+
+local function read_hook()
+	local stat, code = fs.lstat(recovery_hook_path)
+	if not stat then return code == 2 and "" or nil end
+	if stat.type ~= "reg" then return nil end
+	local content = fs.readfile(recovery_hook_path, 65537)
+	return content and #content <= 65536 and not content:find("%z") and content or nil
+end
+
+-- Validation-only operations use RAM. Actual writes stage beside the final file
+-- so rename stays atomic on the persistent filesystem.
+local function stage_hook(content, persistent)
+	if content == "" then return "" end
+	local directory = persistent and "/ptconf/8311" or "/tmp/8311-hook-check"
+	if not fs.mkdirr(directory, "rwx------") or fs.lstat(directory, "type") ~= "dir" or
+		fs.lstat(directory, "uid") ~= 0 or not fs.chmod(directory, "rwx------") then return nil end
+	local path = directory .. "/hook.incoming." .. nixio.getpid()
+	local fd = nixio.open(path, nixio.open_flags("wronly", "creat", "excl"), "rw-------")
+	if not fd then return nil end
+	local ok = pcall(function()
+		local offset = 0
+		while offset < #content do
+			local written = fd:write(content, offset)
+			if not written or written <= 0 then error("hook write failed") end
+			offset = offset + written
+		end
+	end)
+	local closed = fd:close()
+	if not ok or not closed or sys.call("/bin/sh -n " .. util.shellquote(path)) ~= 0 then
+		fs.remove(path)
+		return nil
 	end
+	return path
 end
 
 function action_get_hook_script()
-    local content = fs.readfile("/ptconf/8311/vlan_fixes_hook.sh") or ''
-    luci.http.prepare_content("text/plain; charset=utf-8")
-    luci.http.write(content)
+	http.header("Cache-Control", "no-store")
+	local content = read_hook()
+	if not content then http.status(503, "Unable to read the VLAN hook"); return end
+	http.prepare_content("text/plain; charset=utf-8")
+	http.write(content)
 end
 
 function action_save_hook_script()
@@ -857,17 +890,13 @@ function action_save_hook_script()
 	end
 	-- Share the reset lock so a concurrent edit cannot recreate a removed hook.
 	local ok, success = pcall(function()
-		local path = "/ptconf/8311/vlan_fixes_hook.sh"
 		local saved
 		if content == "" then
-			local removed, error_code = fs.remove(path)
+			local removed, error_code = fs.remove(recovery_hook_path)
 			saved = removed or error_code == 2 -- ENOENT: already absent
 		else
-			local tmp = path .. "." .. nixio.getpid()
-			saved = fs.mkdirr("/ptconf/8311", "rwx------") and
-				fs.writefile(tmp, content) == #content and fs.chmod(tmp, "rw-------") and
-				sys.call("/bin/sh -n " .. util.shellquote(tmp)) == 0 and fs.rename(tmp, path)
-			fs.remove(tmp)
+			local tmp = stage_hook(content, true)
+			if tmp then saved = fs.rename(tmp, recovery_hook_path); fs.remove(tmp) end
 		end
 		return saved and tools.request_vlan_reload()
 	end)
@@ -879,20 +908,24 @@ function action_save_hook_script()
 end
 
 function action_support_download()
-	local archive = ltn12.source.file(io.open(support_file))
-	luci.http.prepare_content("application/x-targz")
-	ltn12.pump.all(archive, luci.http.write)
+	http.header("Cache-Control", "no-store")
+	local file = io.open(support_file, "rb")
+	if not file then http.status(404, "Support archive unavailable"); return end
+	http.prepare_content("application/x-targz")
+	ltn12.pump.all(ltn12.source.file(file), http.write)
 end
 
 function populate_8311_fwenvs()
-	local fwenvs = fwenvs_8311()
-	local fwenvs_values = tools.fw_getenvs_8311()
+	local snapshot = tools.read_fwenvs()
+	if not snapshot then return nil end
+	local fwenvs = fwenvs_8311(true, snapshot)
+	local fwenvs_values = tools.fw_getenvs_8311(snapshot)
 
 	for catid, cat in pairs(fwenvs) do
 		for itemid, item in pairs(cat.items) do
 			local value
 			if item.base then
-				value = tools.fw_getenv{item.id}
+				value = snapshot[item.id] or ''
 			else
 				value = fwenvs_values[item.id] or ''
 			end
@@ -910,6 +943,11 @@ end
 function action_config()
 	http.header("Cache-Control", "no-store")
 	local fwenvs = populate_8311_fwenvs()
+	if not fwenvs then
+		http.status(503, "Configuration unavailable")
+		http.write(translate("Unable to read the current settings. No changes were made."))
+		return
+	end
 
 	ltemplate.render("8311/config", {
 		fwenvs=fwenvs
@@ -944,8 +982,12 @@ function action_vlan_status()
 end
 
 local function save_config()
+	local categories = populate_8311_fwenvs()
+	if not categories then
+		return { success = false, message = translate("Unable to read the current settings. No changes were made.") }, 503
+	end
 	local changes, errors = {}, {}
-	for _, cat in ipairs(populate_8311_fwenvs()) do
+	for _, cat in ipairs(categories) do
 		for _, item in ipairs(cat.items) do
 			local value = formvalue(item.id) or ""
 			local valid, message = tools.validate_config_value(item, value)
@@ -1031,59 +1073,23 @@ function action_save()
 	http.write_json(result)
 end
 
-local recovery_hook_path = "/ptconf/8311/vlan_fixes_hook.sh"
-
-local function stage_recovery_hook(content)
-	if content == "" then return "" end
-	if not fs.mkdirr("/ptconf/8311", "rwx------") or not fs.chmod("/ptconf/8311", "rwx------") then return nil end
-	local path = recovery_hook_path .. ".restore." .. nixio.getpid()
-	local fd = nixio.open(path, nixio.open_flags("wronly", "creat", "excl"), "rw-------")
-	if not fd then return nil end
-	local ok = pcall(function()
-		local offset = 0
-		while offset < #content do
-			local written = fd:write(content, offset)
-			if not written or written <= 0 then error("short hook write") end
-			offset = offset + written
-		end
-	end)
-	local closed = fd:close()
-	if not ok or not closed or sys.call("/bin/sh -n " .. util.shellquote(path)) ~= 0 then
-		fs.remove(path)
-		return nil
-	end
-	return path
-end
-
 local function recover_settings(action, values)
 	local recovery = require "8311.recovery"
-	local raw, oversized = "", false
-	local read = sys.process.exec({ "/usr/sbin/fw_printenv" }, function(chunk)
-		if #raw + #chunk > 131072 then oversized = true else raw = raw .. chunk end
-	end)
-	if not read or read.code ~= 0 or oversized then
+	local current = tools.fw_getenvs_8311()
+	if not current then
 		return { success = false, message = translate("Unable to read the current settings. No changes were made.") }, 503
 	end
-	local current = {}
-	for id, value in ("\n" .. raw):gmatch("\n8311_([%w_]+)=([^\r\n]*)") do current[id] = value end
 	local categories = fwenvs_8311(false)
-	local hook = ""
-	if fs.lstat(recovery_hook_path) then
-		if action == "reset" then hook = "present"
-		else
-			if fs.lstat(recovery_hook_path, "type") ~= "reg" then
-				return { success = false, message = translate("Unable to read the VLAN hook. No changes were made.") }, 503
-			end
-			hook = fs.readfile(recovery_hook_path, recovery.hook_limit + 1)
-			if not hook or #hook > recovery.hook_limit then
-				return { success = false, message = translate("Unable to read the VLAN hook. No changes were made.") }, 503
-			end
-		end
+	local hook
+	if action == "reset" then hook = fs.lstat(recovery_hook_path) and "present" or ""
+	else hook = read_hook() end
+	if not hook then
+		return { success = false, message = translate("Unable to read the VLAN hook. No changes were made.") }, 503
 	end
 	if action == "backup" then
 		local content, reason, field = recovery.export(categories, current, hook)
 		if not content then return { success = false, field = field, message = translate(reason) }, 400 end
-		local staged = stage_recovery_hook(hook)
+		local staged = stage_hook(hook, false)
 		if staged == nil then return { success = false, message = translate("The VLAN hook could not be validated. No changes were made.") }, 400 end
 		if staged ~= "" then fs.remove(staged) end
 		return { success = true, download = content }, 200
@@ -1098,7 +1104,7 @@ local function recover_settings(action, values)
 	if plan.hook_changed then table.insert(names, translate("VLAN hook script")) end
 	local staged
 	if plan.hook_changed then
-		staged = stage_recovery_hook(plan.hook)
+		staged = stage_hook(plan.hook, action ~= "preview")
 		if staged == nil then return { success = false, message = translate("The VLAN hook could not be validated. No changes were made.") }, 400 end
 	end
 	if action == "preview" then
@@ -1193,7 +1199,9 @@ function action_recovery()
 end
 
 function action_pon_explorer()
-	local omci = util.exec("/usr/bin/luci-me-dump")
+	local omci = tools.read_command({ "/usr/bin/timeout", "-k", "1", "10", "/usr/bin/luci-me-dump" })
+	http.header("Cache-Control", "no-store")
+	if not omci then http.status(503, "Diagnostic read failed"); return end
 
 	ltemplate.render("8311/pon_me", {
 		omci=omci
@@ -1201,9 +1209,16 @@ function action_pon_explorer()
 end
 
 function action_pon_dump(me_id, instance_id)
-	cmd = { "/usr/bin/omci_pipe.sh", "meg", me_id, instance_id }
-	luci.http.prepare_content("text/plain; charset=utf-8")
-	luci.sys.process.exec(cmd, http.write)
+	for _, value in ipairs({ me_id or "", instance_id or "" }) do
+		if type(value) ~= "string" or not value:match("^%d+$") or #value > 5 or tonumber(value) > 65535 then
+			http.status(400, "Invalid ME identifier"); return
+		end
+	end
+	local output = tools.read_command({ "/usr/bin/timeout", "-k", "1", "10", "/usr/bin/omci_pipe.sh", "meg", me_id, instance_id })
+	http.header("Cache-Control", "no-store")
+	if not output then http.status(503, "Diagnostic read failed"); return end
+	http.prepare_content("text/plain; charset=utf-8")
+	http.write(output)
 end
 
 local firmware_limit = 128 * 1024 * 1024
@@ -1369,19 +1384,15 @@ function action_support()
 		http.status(400, "Invalid support action"); return
 	end
 
-	local support_file_exists = false
-	local support_output = ""
 	local support_exec
-
-	if action == "generate" then
+	if action == "generate" or action == "delete" then
 		local cmd = { "/usr/sbin/8311-support.sh" }
-		if values["include_raw"] == "1" then table.insert(cmd, "--raw") end
-		support_exec = luci.sys.process.exec(cmd, supportOut, supportOut)
-	elseif action == "delete" then
-		fs.remove(support_file)
+		if action == "delete" then table.insert(cmd, "--delete")
+		elseif values["include_raw"] == "1" then table.insert(cmd, "--raw") end
+		support_exec = sys.process.exec(cmd, supportOut, supportOut) or { code = 1 }
+		if support_exec.code ~= 0 then http.status(500, "Support operation failed") end
 	end
-
-	support_file_exists = file_exists(support_file) and (not support_exec or support_exec.code == 0)
+	local support_file_exists = file_exists(support_file) and (not support_exec or support_exec.code == 0)
 
 	ltemplate.render("8311/support", {
 		support_exec=support_exec,
@@ -1407,5 +1418,5 @@ end
 
 function supportOut(data)
 	data = data or ''
-	supportOutput = supportOutput .. data
+	supportOutput = supportOutput .. data:sub(1, math.max(0, 65536 - #supportOutput))
 end

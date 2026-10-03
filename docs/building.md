@@ -39,6 +39,10 @@ sudo python3 tools/build_from_release.py \
 
 `--image` / `--image-dir` 是兼容别名。此流程应使用原厂输入，避免对已经修改的镜像重复应用补丁。完整参数见 `./build.sh --help`、`./create.sh --help` 和 `./extract.sh --help`。
 
+原厂输入应放在 `stock/` 等独立目录，不能放在 `out/` 或 `rootfs*` 生成目录内。
+构建保留 `out/` 中其他发布与验证产物；同名构建输出仍会更新。升级包和整片镜像
+先在临时目录完整生成，失败不会发布半成品。`create.sh` 不修改输入文件时间戳。
+
 ## 测试
 
 ```sh
@@ -50,10 +54,13 @@ node tests/status_poll_smoke.cjs
 
 离线回归使用模拟 UBI、EEPROM、环境变量和 LuCI 服务。Windows 可用 Git Bash、Python 和 Lupa 的 Lua 5.1 运行。
 
-浏览器测试需要 Playwright 和 Chromium：
+浏览器测试需要 Playwright 和对应的浏览器引擎：
 
 ```sh
 node tests/frontend_smoke.cjs
+node tests/management_frontend.cjs
 ```
 
-可用 `BROWSER_CHANNEL=msedge` 或 `chrome` 选择已安装的浏览器，或用 `BROWSER_ENGINE=firefox` 运行 Playwright Firefox。CI 在两组 shell 回归和 Firefox 表单、下载测试通过后构建 basic 固件，具体记录见 [验证记录](validation.md)。
+可用 `BROWSER_CHANNEL=msedge` 或 `chrome` 选择已安装的浏览器，或设置
+`BROWSER_ENGINE=chromium`、`firefox`、`webkit`。CI 在 sh、BusyBox 及三个浏览器
+引擎的回归全部通过后构建 basic 固件，具体记录见 [验证记录](validation.md)。

@@ -1,19 +1,15 @@
 function switchTab(tab) {
-	activeTab = $('li.cbi-tab');
+	var selectTab = $('li[data-tab]').filter(function () { return this.dataset.tab === tab; });
+	if (!selectTab.length) return;
+	var activeTab = $('li.cbi-tab');
 	activeTab.addClass('cbi-tab-disabled');
 	activeTab.removeClass('cbi-tab');
 
-	var selectTab = $('li[data-tab=' + tab + ']');
 	selectTab.addClass('cbi-tab');
 	selectTab.removeClass('cbi-tab-disabled');
 
-	activeContainer = $('div[data-tab-active=true]');
-	if (activeContainer)
-		activeContainer.removeAttr('data-tab-active');
-
-	selectContainer = $('div[data-tab=' + tab + ']');
-	if (selectContainer)
-		selectContainer.attr('data-tab-active', 'true');
+	$('div[data-tab-active=true]').removeAttr('data-tab-active');
+	$('div[data-tab]').filter(function () { return this.dataset.tab === tab; }).attr('data-tab-active', 'true');
 }
 
 function saveConfig(form) {
@@ -23,7 +19,7 @@ function saveConfig(form) {
 
 	var activeTab = $('li.cbi-tab[data-tab]').attr('data-tab');
 	if (activeTab) {
-		localStorage.setItem('activeConfigTab', activeTab);
+		try { localStorage.setItem('activeConfigTab', activeTab); } catch (_) { /* Saving does not require browser storage. */ }
 	}
 
 	field.forEach(i => {
@@ -85,46 +81,40 @@ function saveConfig(form) {
 	return false;
 }
 
-function vlanTables() {
-	vlans = $('#syslog');
-
-	vlans.text("Loading...");
-	$.ajax({
-		url: 'vlans/extvlans',
-		dataType: 'text'
-	}).done(function(data) {
-		vlans.text(data);
+function readDiagnosticText(url, output, done) {
+	var previous = output.data('request');
+	if (previous) previous.abort();
+	output.text(output.attr('data-loading') || 'Loading...').show();
+	var request = $.ajax({ url: url, dataType: 'text', timeout: 15000, cache: false });
+	output.data('request', request);
+	request.done(function (data) {
+		if (output.data('request') !== request) return;
+		output.text(data);
+		if (done) done();
+	}).fail(function (_, status) {
+		if (status !== 'abort' && output.data('request') === request)
+			output.text(output.attr('data-failure') || 'Unable to load diagnostics. Retry shortly.');
+	}).always(function () {
+		if (output.data('request') === request) output.removeData('request');
 	});
+}
+
+function vlanTables() {
+	readDiagnosticText('vlans/extvlans', $('#syslog'));
 }
 
 function switchTabPonStatus(tab) {
 	switchTab(tab);
 
-	pontop = $('#syslog');
-
-	pontop.text("Loading...");
-	$.ajax({
-		url: 'pontop/' + tab,
-		dataType: 'text'
-	}).done(function(data) {
-		pontop.text(data);
-	});
+	readDiagnosticText('pontop/' + tab, $('#syslog'));
 }
 
 function showPonMe(meId, instanceId) {
-	meLabel = $('#me_label');
+	var meLabel = $('#me_label');
 	meLabel.hide();
-	meDump = $('#me_dump');
-	meDump.hide();
-
-	$.ajax({
-		url: 'pon_dump/' + meId + '/' + instanceId,
-		dataType: 'text'
-	}).done(function(data) {
+	readDiagnosticText('pon_dump/' + meId + '/' + instanceId, $('#me_dump'), function () {
 		meLabel.text("ME " + meId + " Instance " + instanceId);
 		meLabel.show();
-		meDump.text(data);
-		meDump.show();
 		meLabel.get(0).scrollIntoView({behavior: 'smooth'});
 	});
 }
@@ -244,7 +234,7 @@ function startConnectionDiagnostics(panel) {
 }
 
 function installFirmware(input, reboot) {
-	action = 'install';
+	var action = 'install';
 	if (reboot)
 		action = 'install_reboot';
 
@@ -437,10 +427,12 @@ $(document).ready(function () {
 		readVlanStatus();
 		window.addEventListener('pagehide', function () { clearTimeout(vlanStatusTimer); });
 	}
-	var savedTab = localStorage.getItem('activeConfigTab');
-	if (savedTab) {
-		switchTab(savedTab);
-		localStorage.removeItem('activeConfigTab');
+	if (configForm) {
+		try {
+			var savedTab = localStorage.getItem('activeConfigTab');
+			if (savedTab) switchTab(savedTab);
+			localStorage.removeItem('activeConfigTab');
+		} catch (_) { /* Browser storage can be unavailable. */ }
 	}
 
 	var fixVlansSelect = $('#widget\\.cbid\\.system\\.poncfg\\.fix_vlans');
@@ -467,21 +459,24 @@ $(document).ready(function () {
 	toggleVlanFields();
 	editHookScriptBtn.click(function (e) {
 		e.preventDefault();
+		if (editHookScriptBtn.prop('disabled')) return;
+		editHookScriptBtn.prop('disabled', true);
+		$('#hook-script-save-btn').prop('disabled', true);
+		hookScriptTextarea.val('');
 
 		hookScriptMessage.hide();
 		hookScriptMessage.text('');
 
 		$.ajax({ url: 'get_hook_script', dataType: 'text', timeout: 30000 }).done(function (data) {
-			if (data.trim() === '') {
-				hookScriptTextarea.val('');
-			} else {
-				hookScriptTextarea.val(data);
-			}
+			hookScriptTextarea.val(data);
+			$('#hook-script-save-btn').prop('disabled', false);
 			hookScriptModal.show();
 			adjustTextareaHeight();
 		}).fail(function () {
 			hookScriptMessage.text(translations.hookScriptLoadFailed).css('color', 'red').show();
 			hookScriptModal.show();
+		}).always(function () {
+			editHookScriptBtn.prop('disabled', false);
 		});
 	});
 

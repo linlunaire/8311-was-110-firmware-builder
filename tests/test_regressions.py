@@ -69,11 +69,11 @@ class ShellFixture(unittest.TestCase):
 
     def run_script(self, path, *args, stdin="", cwd=None):
         shell = shell_command()
-        if path.name == "build.sh" and os.name != "nt":
+        if path.read_text(encoding="utf-8").startswith("#!/bin/bash") and os.name != "nt":
             shell = [shutil.which("bash")]
         return subprocess.run(shell + [shell_path(path), *map(str, args)],
                               env=self.env, cwd=cwd or ROOT, input=stdin,
-                              text=True, capture_output=True, timeout=45)
+                              text=True, encoding="utf-8", capture_output=True, timeout=45)
 
     def operations(self):
         return self.ops.read_text().splitlines() if self.ops.exists() else []
@@ -407,6 +407,17 @@ printf '%s\n' '8311_reg_id_hex=736563726574' '8311_lpwd=secret-password' '8311_g
         self.assertIn("secret-password", files["support/fwenvs.txt"])
         self.assertIn("private-omci", files["support/omci_pipe_mda.txt"])
         self.assertIn("secret-password", files["support/system_log.txt"])
+
+    def test_deletion_uses_the_same_generation_lock(self):
+        archive = self.root / "tmp/support.tar.gz"
+        archive.write_bytes(b"fixture")
+        self.command("flock", "exit 1")
+        self.assertNotEqual(self.run_script(self.support, "--delete").returncode, 0)
+        self.assertTrue(archive.exists())
+        self.command("flock", ":")
+        result = self.run_script(self.support, "--delete")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(archive.exists())
 
     def test_failed_generation_does_not_offer_an_old_raw_archive(self):
         for failure in ("ENV_FAIL", "VLAN_FAIL"):

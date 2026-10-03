@@ -48,7 +48,7 @@ _set_8311_override_active() {
 _set_8311_hw_ver() {
 	uci -qc /ptrom/ptconf set "sysinfo_conf.HardwareVersion"="key"
 	uci -qc /ptrom/ptconf set "sysinfo_conf.HardwareVersion.encryflag"="0"
-	uci -qc /ptrom/ptconf set "sysinfo_conf.HardwareVersion.value"="$HW_VERSION"
+	uci -qc /ptrom/ptconf set "sysinfo_conf.HardwareVersion.value"="$1"
 	uci -qc /ptrom/ptconf commit "sysinfo_conf"
 
 	uci -qc /ptdata set "factory_conf.HardwareVersion"="key"
@@ -83,7 +83,7 @@ _set_8311_gateway() {
 _set_8311_lct_mac() {
 	uci -qc /ptdata set "factory_conf.brmac"="key"
 	uci -qc /ptdata set "factory_conf.brmac.encryflag"="0"
-	uci -qc /ptdata set "factory_conf.brmac.value"="$LCT_MAC"
+	uci -qc /ptdata set "factory_conf.brmac.value"="$1"
 	uci -qc /ptdata commit "factory_conf"
 }
 

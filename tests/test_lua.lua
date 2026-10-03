@@ -15,6 +15,24 @@ local function check(name, fn)
 	print("ok - " .. name)
 end
 
+check("Base64 handles all bytes without global functions or mistaking caller arguments for CLI input", function()
+	local bytes = {}
+	for value = 0, 255 do bytes[#bytes + 1] = string.char(value) end
+	local raw = table.concat(bytes)
+	assert(real_base64.dec(real_base64.enc(raw)) == raw)
+	for _, sample in ipairs({ "", "f", "fo", "foo", "line\nnext", string.rep("x", 65536) }) do
+		assert(real_base64.dec(real_base64.enc(sample)) == sample)
+	end
+	assert(rawget(_G, "enc") == nil and rawget(_G, "dec") == nil)
+	package.loaded["nixio"] = { bin = { b64encode = real_base64.enc, b64decode = real_base64.dec } }
+	package.loaded["base64"] = nil
+	arg = { [0] = "caller.lua", "ignored argument" }
+	local codec = require "base64"
+	assert(codec.enc == real_base64.enc and codec.dec == real_base64.dec)
+	package.loaded["nixio"] = nil
+	arg = saved_arg
+end)
+
 local function native_permissions(value)
 	if value == nil then return end
 	local mode = tostring(value)
@@ -47,10 +65,11 @@ local function setup()
 			s.files[path] = content
 			return #content - (s.short_write and 1 or 0)
 		end,
-		mkdirr = function(_, mode) native_permissions(mode); return true end,
+		mkdirr = function(path, mode) native_permissions(mode); s.directories[path] = true; return true end,
 		mkdir = function(path, mode) native_permissions(mode); s.directories[path] = true; return true end,
 		lstat = function(path, field)
-			if not s.files[path] and not s.directories[path] then return nil end
+			if s.fail_lstat then return nil, 5 end
+			if not s.files[path] and not s.directories[path] then return nil, 2 end
 			local info = { type = s.directories[path] and "dir" or "reg", uid = 0 }
 			return field and info[field] or info
 		end,
@@ -111,10 +130,11 @@ local function setup()
 				return { code = s.tc_failure and 1 or 0 }
 			end
 			table.insert(s.processes, command)
-			if command[1] == "/usr/sbin/fw_printenv" then
+			if command[1] == "/usr/sbin/fw_printenv" or command[5] == "/usr/sbin/fw_printenv" then
 				if output then output(s.environment or "") end
 				return { code = s.env_read_code or 0 }
 			end
+			if output then output(s.process_output or "") end
 			return { code = s.process_code or 0 }
 		end },
 		reboot = function() s.rebooted = true end,
@@ -146,7 +166,7 @@ local function setup()
 					if s.fail_write then return nil end
 					local part = data:sub((offset or 0) + 1)
 					if s.discard_writes then return #part end
-					if s.short_write then part = part:sub(1, 1) end
+					if s.short_write or s.short_stream_write then part = part:sub(1, 1) end
 					s.files[path] = s.files[path] .. part
 					return #part
 				end,
@@ -192,6 +212,32 @@ check("HTML escaping handles adjacent special characters and nil", function()
 	assert(tools.html_escape(nil) == "")
 	assert(tools.html_escape(0) == "0")
 	assert(select("#", tools.html_escape("&")) == 1)
+end)
+
+check("failed environment reads never render defaults or write configuration", function()
+	for _, action in ipairs({ "action_config", "action_save" }) do
+		local s, tools, controller = setup()
+		s.env_read_code = 1
+		tools.fwenv_set = function() error("failed read reached configuration writer") end
+		controller[action]()
+		assert(s.status == 503 and not s.render and #s.writes == 0, action)
+	end
+end)
+
+check("one bounded environment snapshot preserves empty and literal values", function()
+	local s, tools, controller = setup()
+	s.environment = "8311_hostname=\n8311_loid=a=b&c\\n\nbootdelay=5\nuart_select=disable\nimg_versionA=one\nimg_versionB=two\n"
+	local values = controller.populate_8311_fwenvs()
+	local fields = {}
+	for _, category in ipairs(values) do
+		for _, field in ipairs(category.items) do fields[field.id] = field end
+	end
+	assert(fields.hostname.value == "" and fields.loid.value == "a=b&c\\n")
+	assert(fields.bootdelay.value == "5" and fields.uart_select.value == "disable")
+	assert(fields.sw_verA.default == "one" and fields.sw_verB.default == "two")
+	assert(#s.processes == 1 and #s.calls == 4, "configuration spawned redundant environment queries")
+	s.environment = string.rep("x", 131073)
+	assert(tools.read_fwenvs() == nil, "oversized environment accepted")
 end)
 
 check("field validation reads choices directly without resolving display defaults", function()
@@ -531,7 +577,7 @@ check("configuration and hook mutations reject GET and missing hook content", fu
 end)
 
 check("hook writes are atomic and failed writes, syntax checks or renames preserve the old script", function()
-	for _, failure in ipairs({ "fail_write", "short_write", "fail_chmod", "fail_rename", "call_code" }) do
+	for _, failure in ipairs({ "fail_write", "fail_chmod", "fail_rename", "call_code" }) do
 		local s, _, controller = setup()
 		local path = "/ptconf/8311/vlan_fixes_hook.sh"
 		s.files[path] = "old hook"
@@ -542,6 +588,7 @@ check("hook writes are atomic and failed writes, syntax checks or renames preser
 		assert(not s.files["/tmp/8311-vlans.reload"])
 	end
 	local s, _, controller = setup()
+	s.short_stream_write = true
 	s.form = { content = "echo new\n" }
 	controller.action_save_hook_script()
 	assert(s.json.success and s.files["/ptconf/8311/vlan_fixes_hook.sh"] == "echo new\n")
@@ -552,6 +599,35 @@ check("VLAN display runs only the two required decoders", function()
 	local s, _, controller = setup()
 	controller.action_vlan_extvlans()
 	assert(#s.processes == 2 and #s.calls == 0)
+end)
+
+check("diagnostic failures discard partial data and reject invalid identifiers", function()
+	for _, action in ipairs({ "action_pontop", "action_vlan_extvlans", "action_pon_explorer", "action_pon_dump" }) do
+		local s, _, controller = setup()
+		s.process_code, s.process_output = 124, "incomplete diagnostic data"
+		if action == "action_pon_dump" then controller[action]("256", "0") else controller[action]() end
+		assert(s.status == 503 and s.text == "" and not s.render, action)
+		assert(s.processes[1][1] == "/usr/bin/timeout")
+	end
+	local s, _, controller = setup()
+	controller.action_pon_dump("65536", "0")
+	controller.action_pon_dump("256", "-1")
+	controller.action_pon_dump("256", nil)
+	assert(s.status == 400 and #s.processes == 0)
+	s.process_output = string.rep("x", 131073)
+	controller.action_pon_dump("256", "0")
+	assert(s.status == 503 and s.text == "")
+end)
+
+check("hook reads stay bounded and unreadable files cannot appear empty", function()
+	local s, _, controller = setup()
+	s.files["/ptconf/8311/vlan_fixes_hook.sh"] = string.rep("x", 65537)
+	controller.action_get_hook_script()
+	assert(s.status == 503 and s.text == "" and s.headers["Cache-Control"] == "no-store")
+	s.files["/ptconf/8311/vlan_fixes_hook.sh"] = nil
+	s.fail_lstat = true
+	controller.action_get_hook_script()
+	assert(s.status == 503 and s.text == "")
 end)
 
 local staged_firmware = "/tmp/8311-web-upgrade/" .. string.rep("a", 32) .. ".tar"
@@ -722,7 +798,7 @@ check("support generation and deletion cannot bypass POST and token checks", fun
 	assert(#s.processes == 1 and #s.processes[1] == 1)
 	s.form.action = "delete"
 	controller.action_support()
-	assert(not s.files["/tmp/support.tar.gz"])
+	assert(s.processes[2][1] == "/usr/sbin/8311-support.sh" and s.processes[2][2] == "--delete")
 end)
 
 local function recovery_fixture()
@@ -893,6 +969,8 @@ check("a generated backup restores credentials, defaults and the exact multiline
 	s.form = { action = "backup", token = "fixture-token" }
 	controller.action_recovery()
 	assert(s.status == 200 and s.files[path] == hook and not s.files[path .. ".restore.123"])
+	for name in pairs(s.directories) do assert(not name:match("^/ptconf/"), "backup touched persistent storage") end
+	for _, call in ipairs(s.calls) do assert(not call:find("/ptconf/", 1, true), "backup staged its hook in flash") end
 	local backup = s.text
 	local recovery = require "8311.recovery"
 	local current = { hostname = "old", loid = "secret-identity", internet_vlan = "41" }
@@ -903,6 +981,7 @@ check("a generated backup restores credentials, defaults and the exact multiline
 	s.form = { action = "preview", token = "fixture-token", preserve_pon = "0", content = backup }
 	controller.action_recovery()
 	assert(s.json.success and s.json.count == 5 and s.json.hook_script and #s.env_writes == 0)
+	for name in pairs(s.directories) do assert(not name:match("^/ptconf/"), "preview touched persistent storage") end
 	assert(s.files[path] == "# newer hook\n" and not s.files[path .. ".restore.123"])
 	s.form.action, s.form.confirm = "restore", "1"
 	controller.action_recovery()

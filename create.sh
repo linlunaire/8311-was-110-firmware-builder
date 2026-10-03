@@ -31,6 +31,11 @@ DATE="@$(date '+%s')"
 
 while [ $# -gt 0 ]; do
 	case "$1" in
+		-i|--image|-H|--header|-b|--bootcore|-k|--kernel|-r|--rootfs|-F|--version-file|-V|--image-version|-L|--image-long-version|-D|--date)
+			[ $# -ge 2 ] && [ -n "$2" ] || { printf "Option '%s' requires a value.\n" "$1" >&2; exit 1; }
+		;;
+	esac
+	case "$1" in
 		-i|--image)
 			OUT="$2"
 			shift
@@ -98,16 +103,6 @@ file_size() {
 	stat -c '%s' "$1"
 }
 
-sed_escape() {
-	sed 's#\\#\\\\#g' | sed 's/#/\\#/g'
-}
-
-tar_trans() {
-	local INPUT="$(echo "$1" | sed_escape)"
-	local NAME="$(echo "$2" | sed_escape)"
-	echo "s#$INPUT#$NAME#"
-}
-
 bfw_add_image() {
 	IMAGE="$1"
 	FILE="${2:-$1}"
@@ -143,7 +138,18 @@ set -e
 [ -n "$ROOTFS" ] || _err "Error: rootfs file must be specified."
 [ -f "$ROOTFS" ] || _err "Error: rootfs file '$ROOTFS' not found."
 
-touch -d "$DATE" "$BOOTCORE" "$KERNEL" "$ROOTFS"
+for INPUT in "$BOOTCORE" "$KERNEL" "$ROOTFS" "$HEADER" "$VERSION_FILE" "$UPGRADE_SCRIPT"; do
+	[ -z "$INPUT" ] || [ "$(realpath -m -- "$OUT")" != "$(realpath -m -- "$INPUT")" ] || _err "Output must not replace an input file."
+done
+for INPUT in "$BOOTCORE" "$KERNEL" "$ROOTFS"; do
+	[ -s "$INPUT" ] || _err "Image component '$INPUT' is empty."
+done
+
+DESTINATION="$OUT"
+WORK=$(mktemp -d "${OUT}.build.XXXXXX")
+trap 'rm -rf "$WORK"' EXIT
+trap 'exit 1' HUP INT TERM
+OUT="$WORK/image"
 
 if [ "$VARIANT" = "basic" ]; then
 	[ -n "$VERSION_FILE" ] || _err "Error: version file must be specified."
@@ -159,7 +165,7 @@ if [ "$VARIANT" = "basic" ]; then
 
 	VER_8311=$(cat "$VERSION_FILE")
 
-	CONTROL="$(mktemp)"
+	CONTROL="$WORK/control"
 	cat > "$CONTROL" <<CONTROL
 $VER_8311
 
@@ -172,24 +178,19 @@ SHA256_BOOTCORE=$SHA256_BOOTCORE
 SHA256_ROOTFS=$SHA256_ROOTFS
 CONTROL
 
-	touch -d "$DATE" "$UPGRADE_SCRIPT" "$CONTROL"
-
 	echo "Creating local upgrade tar file"
-	TAR=("-c" "-P" "-h" "--sparse" "-f" "$OUT")
-	TAR+=("--transform" "$(tar_trans "$UPGRADE_SCRIPT" "upgrade.sh")")
-	TAR+=("--transform" "$(tar_trans "$CONTROL" "control")")
-	TAR+=("--transform" "$(tar_trans "$KERNEL" "kernel.bin")")
-	TAR+=("--transform" "$(tar_trans "$BOOTCORE" "bootcore.bin")")
-	TAR+=("--transform" "$(tar_trans "$ROOTFS" "rootfs.img")")
-	TAR+=("--" "$UPGRADE_SCRIPT" "$CONTROL" "$KERNEL" "$BOOTCORE" "$ROOTFS")
-
-	tar "${TAR[@]}" || { rm -f "$CONTROL"; exit 1; }
-	rm -f "$CONTROL"
+	cp -- "$UPGRADE_SCRIPT" "$WORK/upgrade.sh"
+	cp -- "$KERNEL" "$WORK/kernel.bin"
+	cp -- "$BOOTCORE" "$WORK/bootcore.bin"
+	cp -- "$ROOTFS" "$WORK/rootfs.img"
+	tar -c --sparse --mtime="$DATE" -f "$OUT" -C "$WORK" -- upgrade.sh control kernel.bin bootcore.bin rootfs.img
 	touch -d "$DATE" "$OUT"
-	echo "Local upgrade tar file '$OUT' created successfully."
+	mv -f -- "$OUT" "$DESTINATION"
+	echo "Local upgrade tar file '$DESTINATION' created successfully."
 else
 	[ -n "$HEADER" ] || _err "Error: header file must be specified."
 	[ -f "$HEADER" ] || _err "Error: header file '$HEADER' not found."
+	[ "$(file_size "$HEADER")" -ge $((0xD00)) ] || _err "Image header is truncated."
 
 	NUM=0
 	FILE_OFFSET=$((0x100))
@@ -222,9 +223,12 @@ else
 	HEADER_CRC_OFFSET=$((0x6A))
 
 	echo "Updating CRCs"
-	{ cat "${FILES[@]}" | tools/bfw-crc.pl; cat /dev/zero; } | dd of="$OUT" seek="$CONTENT_CRC_OFFSET" bs=1 count=8 conv=notrunc 2>/dev/null
-	head -c "$LEN_HDR" "$OUT" | tools/bfw-crc.pl | dd of="$OUT" seek="$HEADER_CRC_OFFSET" bs=1 count=4 conv=notrunc 2>/dev/null
+	(set -o pipefail; cat "${FILES[@]}" | tools/bfw-crc.pl > "$WORK/content-crc")
+	{ cat "$WORK/content-crc"; printf '\000\000\000\000'; } | dd of="$OUT" seek="$CONTENT_CRC_OFFSET" bs=1 count=8 conv=notrunc 2>/dev/null
+	(set -o pipefail; head -c "$LEN_HDR" "$OUT" | tools/bfw-crc.pl > "$WORK/header-crc")
+	dd if="$WORK/header-crc" of="$OUT" seek="$HEADER_CRC_OFFSET" bs=1 count=4 conv=notrunc 2>/dev/null
 
 	touch -d "$DATE" "$OUT"
-	echo "Local upgrade image file '$OUT' created successfully."
+	mv -f -- "$OUT" "$DESTINATION"
+	echo "Local upgrade image file '$DESTINATION' created successfully."
 fi

@@ -37,6 +37,7 @@ let diagnosticRequests = 0, failDiagnostics = false, holdDiagnostics = false;
 const heldDiagnostics = [];
 const submissions = [];
 const diagnosticOptions = [];
+const textReads = [];
 const data = {
   status:'Fixture PON', power:'-19 dBm', temperature:'42 C', eth_speed:'10000 Mbps', vlan_message:'Rules checked',
   links:[{ device:'eth0_0', available:true, rules_available:true,
@@ -61,6 +62,20 @@ const server = http.createServer(async (req, res) => {
     };
     if (holdDiagnostics) { heldDiagnostics.push(respond); return; }
     respond();
+  } else if (url.startsWith('/pontop/') || url.startsWith('/pon_dump/')) {
+    textReads.push(url);
+    const slow = url === '/pontop/slow' || url === '/pon_dump/1/1';
+    const respond = () => {
+      res.writeHead(url === '/pontop/failed' ? 503 : 200, {'Content-Type':'text/plain'});
+      res.end(slow ? 'old response' : 'current response');
+    };
+    if (slow) setTimeout(respond, 300); else respond();
+  } else if (url === '/text-page') {
+    res.setHeader('Content-Type','text/html');
+    res.end(`<!doctype html><meta charset="utf-8"><ul>
+      <li data-tab="slow" class="cbi-tab">Slow</li><li data-tab="latest">Latest</li></ul>
+      <textarea id="syslog" data-failure="Read failed"></textarea>
+      <h3 id="me_label"></h3><pre id="me_dump"></pre>${scripts}`);
   } else if (req.method === 'POST') {
     let body = '';
     for await (const chunk of req) body += chunk;
@@ -169,6 +184,34 @@ const server = http.createServer(async (req, res) => {
     assert.match(submissions.at(-1),/(?:action=commit|name="action"\r\n\r\ncommit)/);
     assert.match(submissions.at(-1),/fixture-token/);
     console.log('ok - confirming a running trial submits one authenticated commit action');
+
+    await page.goto(base + '/text-page');
+    await page.waitForLoadState('networkidle');
+    await page.evaluate(()=>switchTabPonStatus('slow'));
+    await page.waitForTimeout(80);
+    await page.evaluate(()=>switchTabPonStatus('latest'));
+    await page.waitForTimeout(400);
+    assert(textReads.includes('/pontop/slow') && textReads.includes('/pontop/latest'));
+    assert.equal(await page.locator('#syslog').inputValue(),'current response');
+    assert.equal(await page.locator('li.cbi-tab').getAttribute('data-tab'),'latest');
+    await page.evaluate(()=>showPonMe(1,1));
+    await page.waitForTimeout(80);
+    await page.evaluate(()=>showPonMe(2,2));
+    await page.waitForTimeout(400);
+    assert.equal(await page.locator('#me_label').innerText(),'ME 2 Instance 2');
+    assert.equal(await page.locator('#me_dump').innerText(),'current response');
+    console.log('ok - a late diagnostic response cannot overwrite the selected PON tab or ME');
+    await page.evaluate(()=>switchTabPonStatus('failed'));
+    await page.waitForFunction(()=>document.getElementById('syslog').value==='Read failed');
+    await page.evaluate(()=>{
+      const ajax=$.ajax;
+      $.ajax=function(options){options.timeout=40;return ajax(options);};
+      switchTabPonStatus('slow');
+    });
+    await page.waitForFunction(()=>document.getElementById('syslog').value==='Read failed');
+    await page.waitForTimeout(350);
+    assert.equal(await page.locator('#syslog').inputValue(),'Read failed');
+    console.log('ok - failed and timed-out diagnostic reads replace the loading state with actionable feedback');
 
     await page.setViewportSize({width:360,height:800});
     await page.goto(base + '/diagnostics-page');
