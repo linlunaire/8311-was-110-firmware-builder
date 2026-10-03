@@ -10,7 +10,7 @@ A、B 是两套可以轮换启动的完整固件槽，每套都有 `kernel`、`b
 选择另一槽写入。这与 [8311 的升级说明](https://pon.wiki/guides/install-the-8311-community-firmware-on-the-was-110/#ab-architecture)
 一致。运营商侧也可能通过 OMCI 发起固件激活，因此不能把另一槽视为永不变化的救援系统。
 
-安装前目标从 B 运行，`commit_bank=B`，`img_activate` 未设置。
+最初安装前目标从 B 运行，`commit_bank=B`，`img_activate` 未设置。
 `img_validA/B=true` 是环境标志，不能替代对固件文件和实际启动的验证。
 
 | UBI 卷名 | 本次读取的卷 ID | 用途 |
@@ -22,8 +22,8 @@ A、B 是两套可以轮换启动的完整固件槽，每套都有 `kernel`、`b
 
 卷 ID 与升级脚本的创建顺序并不完全一致，因此必须按卷名查询，不能按
 固定数字写入。升级脚本对已有卷使用 `ubinfo -N` 查询；隔离回归覆盖这类映射。
-目标 A 的 rootfs 容量比当前发布版镜像小，写入更大 rootfs 前需要由原有
-`ubirsvol -N rootfsA` 流程扩容；不会删除或重编号 B、配置卷或原始 MTD 分区。
+首次安装前 A 的 rootfs 容量较小，当时通过原有 `ubirsvol -N rootfsA` 流程扩容。
+后续只在目标容量不足时扩容，不删除或重编号 B、配置卷或原始 MTD 分区。
 
 ## 启动选择与试启动
 
@@ -50,7 +50,7 @@ overlay。8311 管理的环境配置和 `/ptconf` 独立持久保存，再由初
 新 UI 的设置备份因此导出受支持的 8311 环境配置与 VLAN hook，而不是
 把通用 OpenWrt `sysupgrade` 备份流程当成可直接替换的硬件升级流程。
 
-本次构建保留已发布 v2.8.3 的 kernel 和 bootcore。二者与目标正在运行的
+本次构建保留已发布 v2.8.3 的 kernel 和 bootcore。二者与目标最初运行的
 CN 固件对应卷的有效镜像字节比较完全一致（UBI 卷末尾填充不计入镜像）。
 新版本不承诺迁移 CN 特有 VLAN/IGMP 参数；真实光纤、Internet/IPTV 和
 断电恢复仍需分别验证。
@@ -77,9 +77,15 @@ CLI 新增 `--no-commit` 和 `--trial`；原先未指定这些选项的交互流
 和 [Linux SquashFS superblock](https://github.com/torvalds/linux/blob/master/fs/squashfs/squashfs_fs.h)。
 这些检查用于拒绝已知无效镜像；正常启动、业务连接和断电故障仍需分别验证。
 
+## 2026-10-03 当前安装状态
+
+当前运行 `v2.8.3-opt1_basic_8f9e479` 的 A 槽，默认槽为 A，激活标志已清除。
+经 B、A 两次试启动及网页确认后，按用户选择重新清空 B 镜像内容并保留卷结构。
+空槽不能切换，配置与现有 Hook 保持不变；详见 [本轮验证记录](validation.md)。
+
 ## 2026-10-03 此前安装记录
 
-最终安装版本为 `v2.8.3-opt1_basic_b159a2c`，当前运行 A，`commit_bank=A`，一次激活标志已清除。流程中先写 A 并逐组件读回，保持默认 B 后通过 `img_activate=A` 试启动；也实际回到原 B，再写入修正后的 A。确认正式镜像上的 HTTPS 管理、备份与恢复预览正常后，才两次写入默认槽并读回确认 A。
+当时安装版本为 `v2.8.3-opt1_basic_b159a2c`，运行 A，`commit_bank=A`，一次激活标志已清除。流程中先写 A 并逐组件读回，保持默认 B 后通过 `img_activate=A` 试启动；也实际回到原 B，再写入修正后的 A。确认正式镜像上的 HTTPS 管理、备份与恢复预览正常后，才两次写入默认槽并读回确认 A。
 
 B 的 kernel、bootcore、rootfs 全卷哈希与安装前一致，所有 `8311_` 配置的规范化哈希不变，原 SSH 主机密钥仍可验证。没有恢复或重置用户配置。新控制器文件来自重新生成的 rootfs，正式运行不依赖试验用 overlay 补丁。
 
