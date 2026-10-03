@@ -10,13 +10,13 @@ A、B 是两套可以轮换启动的完整固件槽，每套都有 `kernel`、`b
 选择另一槽写入。这与 [8311 的升级说明](https://pon.wiki/guides/install-the-8311-community-firmware-on-the-was-110/#ab-architecture)
 一致。运营商侧也可能通过 OMCI 发起固件激活，因此不能把另一槽视为永不变化的救援系统。
 
-目标当前从 B 运行，`commit_bank=B`，`img_activate` 未设置。
+安装前目标从 B 运行，`commit_bank=B`，`img_activate` 未设置。
 `img_validA/B=true` 是环境标志，不能替代对固件文件和实际启动的验证。
 
 | UBI 卷名 | 本次读取的卷 ID | 用途 |
 | --- | --- | --- |
-| kernelA / rootfsA / bootcoreA | 0 / 1 / 2 | 未运行的 A 槽 |
-| kernelB / bootcoreB / rootfsB | 4 / 5 / 6 | 当前 B 槽 |
+| kernelA / rootfsA / bootcoreA | 0 / 1 / 2 | 安装前未运行的 A 槽 |
+| kernelB / bootcoreB / rootfsB | 4 / 5 / 6 | 安装前运行的 B 槽 |
 | rootfs_data | 3 | 两槽共用的可写 overlay |
 | ptconf | 7 | 两槽共用的持久配置 |
 
@@ -54,3 +54,11 @@ overlay。8311 管理的环境配置和 `/ptconf` 独立持久保存，再由初
 CN 固件对应卷的有效镜像字节比较完全一致（UBI 卷末尾填充不计入镜像）。
 新版本不承诺迁移 CN 特有 VLAN/IGMP 参数；真实光纤、Internet/IPTV 和
 断电恢复仍需分别验证。
+
+## 2026-10-03 实际安装结果
+
+最终安装版本为 `v2.8.3-opt1_basic_b159a2c`，当前运行 A，`commit_bank=A`，一次激活标志已清除。流程中先写 A 并逐组件读回，保持默认 B 后通过 `img_activate=A` 试启动；也实际回到原 B，再写入修正后的 A。确认正式镜像上的 HTTPS 管理、备份与恢复预览正常后，才两次写入默认槽并读回确认 A。
+
+B 的 kernel、bootcore、rootfs 全卷哈希与安装前一致，所有 `8311_` 配置的规范化哈希不变，原 SSH 主机密钥仍可验证。没有恢复或重置用户配置。新控制器文件来自重新生成的 rootfs，正式运行不依赖试验用 overlay 补丁。
+
+这次证明了正常启动和正常 A/B 切换路径；没有模拟启动崩溃、断电或 NAND 故障。设备未接光纤，PON 注册、Internet 与 IPTV 仍不在本次结论内。
