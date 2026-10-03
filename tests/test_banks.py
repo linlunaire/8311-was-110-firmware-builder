@@ -109,6 +109,12 @@ class BankControlTests(ShellFixture):
     def setUp(self):
         super().setUp()
         self.control = self.script("files/common/usr/sbin/8311-bankctl.sh", True)
+        # BusyBox ash can implement sleep internally. Resolve both timer and
+        # destructive reboot explicitly to fixtures, even after fixture cleanup.
+        self.control.write_text(self.control.read_text().replace("\n", '''
+sleep() { "$TEST_BIN/sleep" "$@"; }
+reboot() { "$TEST_BIN/reboot" "$@"; }
+''', 1), encoding="utf-8", newline="\n")
         for directory in ("proc", "usr/sbin", "env"):
             (self.root / directory).mkdir(parents=True)
         (self.root / "proc/cmdline").write_text("rootfsname=rootfsA\n")
