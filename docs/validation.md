@@ -12,7 +12,15 @@
 
 本地 Windows / Git Bash 完整 43 项通过，含 41 组 Lua 回归；本地 Edge 22 组通过，其中配置与固件模板由目标原生 LuCI 解析器使用模拟数据渲染。覆盖全部 33 种连续掩码、未提交字段刷新、保存后重新加载、卡住的请求与未结束的下载正文、Hook 逐条失败、VLAN 缺脚本/缺接口/检测恢复等情况。
 
-目标 BusyBox 对四个候选脚本通过语法检查；新 Lua 源码在内存中验证了实际 PCRE 掩码检查及恢复拒绝，并渲染配置模板。全部检查未写入目标配置或应用候选 Hook。ShellCheck error 级别与简中目录编译通过。远端 Firefox、打包和新镜像安装的结果待构建后补记。
+目标 BusyBox 对四个候选脚本通过语法检查；新 Lua 源码在内存中验证了实际 PCRE 掩码检查及恢复拒绝，并渲染配置模板。这些候选检查未写入目标配置或应用候选 Hook。ShellCheck error 级别与简中目录编译通过。
+
+最终源码为 [`278b0e1`](https://github.com/linlunaire/8311-was-110-firmware-builder/commit/278b0e1615f165080409fde443847e5198317035)。[Linux CI 37117417380](https://github.com/linlunaire/8311-was-110-firmware-builder/actions/runs/37117417380) 的 sh / BusyBox 各 43 项、Firefox 21 组和固件构建全部通过。第一次 Firefox 检查在真实刷新后复现了未保存的 `202` 仍被恢复；改为在初始化和 pageshow 后的下一任务重置字段后，相同检查读回后台值 `100`。保存后真实重新加载与结果提示也已通过。
+
+下载的 artifact 为 `11272047617`，ZIP SHA-256 为 `550e9fd95dbe07b612bb7fddfe00a889b0ef7f5927dc8732856e8bbccffc0337`。7 项 SHA256SUMS、升级归档内容、control 的组件尺寸/哈希和构建 manifest 均已核对；270 项受保护二进制不变。8 个改动的运行源码与提交逐字节一致，简中 LMO 与源码编译结果一致。RootFS 为 6,209,536 字节，升级包 SHA-256 为 `48b4eaea394e50563027991b6b9d66bc704ed80fd24edb1c03c5114c7b6ae27a`。
+
+实机已从 `v2.8.3-opt1_basic_278b0e1` 的 A 分区启动。三个组件独立读回校验通过，原厂 B 三卷完整哈希与最初备份一致；当前 8311 配置规范化哈希及现有 Hook 全文哈希在切换、安装、试启动后均保持不变。9 个运行文件的设备哈希与已验证镜像一致，overlay 没有对应替换文件。SSH 与 HTTPS 检查通过后才设置并读回 `commit_bank=A`。
+
+新镜像的实际 HTTPS 检查通过：配置页禁止缓存并带有未保存/超时/VLAN 状态控件，VLAN 监控处于运行状态并报告脚本完成及上次成功时间；2833 字节备份具有正确的文本类型、附件与不缓存头，原文件恢复预览为 0 项变化。非法非连续掩码预览返回 400，无效 token / GET 被拒绝，metrics / PON 状态 JSON 正常。没有通过检查导入、重置配置或安装示例 Hook。VLAN 成功状态反映脚本退出结果，不代表已经验证 Internet 拨号或 IPTV 播放。
 
 ## 已安装的备份下载修复及此前验证
 
