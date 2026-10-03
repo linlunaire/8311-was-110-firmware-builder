@@ -21,6 +21,7 @@ local reboot_enable = firmware_installed and firmware_action == "install"
 	<p class="cbi-section-descr"><%:Download a configuration backup before upgrading, or restore one after installation. Factory calibration, bootloader and firmware banks are not part of a settings backup.%></p>
 	<form id="recovery-form" action="<%=url('admin', 'system', 'flash', 'recovery')%>" method="post"
 		data-failure="<%=esc(translate('Unable to complete recovery. Check the connection and retry.'))%>"
+		data-timeout="<%=esc(translate('The request timed out. Changes may already be saved. Reload the page to check before retrying.'))%>"
 		data-file-error="<%=esc(translate('Choose a non-empty 8311 settings file no larger than 128 KiB.'))%>"
 		data-backup-success="<%=esc(translate('Configuration downloaded. Keep the file private; it contains authentication settings. Restore it here after installing compatible firmware.'))%>"
 		data-hook-confirm="<%=esc(translate('This backup includes a VLAN hook script that will run when VLAN fixes are enabled. Restore it only if you trust its source. Continue?'))%>"

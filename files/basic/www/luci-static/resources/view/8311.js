@@ -57,12 +57,18 @@ function saveConfig(form) {
 			url: form.action,
 			method: 'POST',
 			data: $(form).serialize(),
-			dataType: 'json'
+			dataType: 'json',
+			timeout: 30000
 		}).done(function (response) {
 			message.text(response.message).show();
-		}).fail(function (xhr) {
+			if (response.success === true) {
+				try { sessionStorage.setItem('8311-config-result', response.message); } catch (_) { /* Reload still verifies saved values. */ }
+				window.location.reload();
+			}
+		}).fail(function (xhr, status) {
 			var response = xhr.responseJSON || {};
-			message.text(response.message || 'Unable to save configuration. Reload the page and retry.').show();
+			message.text(status === 'timeout' ? form.dataset.timeout :
+				(response.message || 'Unable to save configuration. Reload the page and retry.')).show();
 			Object.keys(response.errors || {}).forEach(function (name) {
 				var input = document.getElementById('widget.cbid.system.poncfg.' + name);
 				if (input) {
@@ -225,7 +231,8 @@ async function runRecovery(input, operation) {
 	try {
 		await operation(form);
 	} catch (error) {
-		recoveryMessage((error.responseJSON || {}).message || form.dataset.failure);
+		const timedOut = error.name === 'AbortError' || error.statusText === 'timeout';
+		recoveryMessage(timedOut ? form.dataset.timeout : ((error.responseJSON || {}).message || form.dataset.failure));
 	} finally {
 		controls.forEach((control, index) => { control.disabled = disabled[index]; });
 		$(input).removeClass('spinning');
@@ -236,7 +243,7 @@ async function runRecovery(input, operation) {
 
 function requestRecovery(form, action, content, preserve) {
 	return $.ajax({
-		url: form.action, method: 'POST', dataType: 'json',
+		url: form.action, method: 'POST', dataType: 'json', timeout: 30000,
 		data: { action: action, token: form.querySelector('[name="token"]').value,
 			content: content || '', preserve_pon: preserve ? '1' : '0', confirm: action === 'preview' ? '' : '1' }
 	});
@@ -244,27 +251,34 @@ function requestRecovery(form, action, content, preserve) {
 
 function backupSettings(input) {
 	return runRecovery(input, async function(form) {
-		const response = await fetch(form.action, {
-			method: 'POST', credentials: 'same-origin', cache: 'no-store',
-			body: new URLSearchParams({ action: 'backup', token: form.querySelector('[name="token"]').value })
-		});
-		if (!response.ok) {
-			let error = {};
-			try { error = await response.json(); } catch (_) { /* Use the translated connection message. */ }
-			throw { responseJSON: error };
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), 30000);
+		try {
+			const response = await fetch(form.action, {
+				method: 'POST', credentials: 'same-origin', cache: 'no-store',
+				signal: controller.signal,
+				body: new URLSearchParams({ action: 'backup', token: form.querySelector('[name="token"]').value })
+			});
+			if (!response.ok) {
+				let error = {};
+				try { error = await response.json(); } catch (_) { /* Use the translated connection message. */ }
+				throw { responseJSON: error };
+			}
+			if (!(response.headers.get('Content-Type') || '').startsWith('text/plain')) throw new Error('Invalid backup response');
+			const blob = await response.blob();
+			if (!blob.size || blob.size > 131072) throw new Error('Invalid backup size');
+			const url = URL.createObjectURL(blob);
+			const link = document.createElement('a');
+			link.href = url;
+			link.download = '8311-settings-' + new Date().toISOString().slice(0, 19).replace(/:/g, '-') + '.env';
+			document.body.appendChild(link);
+			link.click();
+			link.remove();
+			setTimeout(() => URL.revokeObjectURL(url), 1000);
+			recoveryMessage(form.dataset.backupSuccess);
+		} finally {
+			clearTimeout(timer);
 		}
-		if (!(response.headers.get('Content-Type') || '').startsWith('text/plain')) throw new Error('Invalid backup response');
-		const blob = await response.blob();
-		if (!blob.size || blob.size > 131072) throw new Error('Invalid backup size');
-		const url = URL.createObjectURL(blob);
-		const link = document.createElement('a');
-		link.href = url;
-		link.download = '8311-settings-' + new Date().toISOString().slice(0, 19).replace(/:/g, '-') + '.env';
-		document.body.appendChild(link);
-		link.click();
-		link.remove();
-		setTimeout(() => URL.revokeObjectURL(url), 1000);
-		recoveryMessage(form.dataset.backupSuccess);
 	});
 }
 
@@ -320,6 +334,40 @@ function resetSettings(input) {
 }
 
 $(document).ready(function () {
+	var configForm = document.getElementById('8311-config');
+	if (configForm) {
+		$(configForm).on('input change', function () {
+			$('#config-save-message').text(configForm.dataset.unsaved).show();
+		});
+		window.addEventListener('pageshow', function (event) {
+			if (event.persisted) { window.location.reload(); return; }
+			// Firefox can restore unsaved controls even when the HTML is fresh.
+			configForm.reset();
+			$('#save-btn').prop('disabled', false).removeClass('spinning');
+			if (fixVlansSelect.length) toggleVlanFields();
+		});
+		try {
+			var result = sessionStorage.getItem('8311-config-result');
+			sessionStorage.removeItem('8311-config-result');
+			if (result) $('#config-save-message').text(result).show();
+		} catch (_) { /* Browser storage can be unavailable. */ }
+	}
+	var vlanStatus = document.getElementById('vlan-apply-status');
+	if (vlanStatus) {
+		var vlanStatusTimer;
+		function readVlanStatus() {
+			if (document.hidden) { vlanStatusTimer = setTimeout(readVlanStatus, 5000); return; }
+			$.ajax({ url: vlanStatus.dataset.url, dataType: 'json', timeout: 5000, cache: false }).done(function (status) {
+				var text = status.message;
+				if (status.last_applied_at > 0) text += ' ' + vlanStatus.dataset.lastApplied + ' ' + new Date(status.last_applied_at * 1000).toLocaleString();
+				$(vlanStatus).text(text);
+			}).fail(function () { $(vlanStatus).text(vlanStatus.dataset.failure); }).always(function () {
+				vlanStatusTimer = setTimeout(readVlanStatus, 5000);
+			});
+		}
+		readVlanStatus();
+		window.addEventListener('pagehide', function () { clearTimeout(vlanStatusTimer); });
+	}
 	var savedTab = localStorage.getItem('activeConfigTab');
 	if (savedTab) {
 		switchTab(savedTab);
@@ -354,7 +402,7 @@ $(document).ready(function () {
 		hookScriptMessage.hide();
 		hookScriptMessage.text('');
 
-		$.get('get_hook_script', function (data) {
+		$.ajax({ url: 'get_hook_script', dataType: 'text', timeout: 30000 }).done(function (data) {
 			if (data.trim() === '') {
 				hookScriptTextarea.val('');
 			} else {
@@ -362,12 +410,24 @@ $(document).ready(function () {
 			}
 			hookScriptModal.show();
 			adjustTextareaHeight();
+		}).fail(function () {
+			hookScriptMessage.text(translations.hookScriptLoadFailed).css('color', 'red').show();
+			hookScriptModal.show();
 		});
 	});
 
 	$('#hook-script-save-btn').click(function () {
+		var saveButton = $(this);
+		if (saveButton.prop('disabled')) return;
+		saveButton.prop('disabled', true).addClass('spinning');
 		var content = hookScriptTextarea.val();
-		$.post('save_hook_script', { content: content, token: $('#8311-config input[name="token"]').val() }, function (response) {
+		$.ajax({ url: 'save_hook_script', method: 'POST', dataType: 'json', timeout: 30000,
+			data: { content: content, token: $('#8311-config input[name="token"]').val() }
+		}).done(function (response) {
+			if (!response.success) {
+				hookScriptMessage.text(translations.hookScriptSaveFailed).css('color', 'red').show();
+				return;
+			}
 			hookScriptMessage.text(translations.hookScriptSaved);
 			hookScriptMessage.css('color', 'green');
 			hookScriptMessage.show();
@@ -375,10 +435,12 @@ $(document).ready(function () {
 				hookScriptMessage.hide();
 				hookScriptModal.hide();
 			}, 1000); // hide window in 1s
-		}).fail(function () {
-			hookScriptMessage.text(translations.hookScriptSaveFailed);
+		}).fail(function (_, status) {
+			hookScriptMessage.text(status === 'timeout' ? configForm.dataset.timeout : translations.hookScriptSaveFailed);
 			hookScriptMessage.css('color', 'red');
 			hookScriptMessage.show();
+		}).always(function () {
+			saveButton.prop('disabled', false).removeClass('spinning');
 		});
 	});
 	$('#hook-script-cancel-btn').click(function () {

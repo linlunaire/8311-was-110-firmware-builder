@@ -1,4 +1,5 @@
 """Offline regressions: all firmware devices and commands are test fixtures."""
+import base64
 import hashlib
 import io
 import os
@@ -219,6 +220,36 @@ echo "env:$1:$2" >> "$OPS"
 
 
 class FwenvTests(ShellFixture):
+    def test_base64_is_single_line_and_preserves_literal_values(self):
+        script = self.script("files/common/usr/sbin/fwenv_set")
+        self.command("fw_setenv", 'printf "%s|%s|%s\\n" "$1" "$2" "$3" >> "$OPS"')
+        for value in ("x" * 100, r"literal\n\t\\", "-n", "猫棒配置"):
+            with self.subTest(value=value):
+                if self.ops.exists():
+                    self.ops.unlink()
+                result = self.run_script(script, "--8311", "--base64", "--", "fw_match", value)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                encoded = base64.b64encode(value.encode()).decode()
+                self.assertEqual(self.operations(), ["--|8311_fw_match_b64|" + encoded] * 2)
+
+    def test_base64_failure_prevents_environment_writes(self):
+        script = self.script("files/common/usr/sbin/fwenv_set")
+        self.command("base64", "exit 13")
+        self.command("fw_setenv", 'echo write >> "$OPS"')
+        result = self.run_script(script, "--base64", "fw_match", "fixture")
+        self.assertEqual(result.returncode, 13, result.stderr)
+        self.assertEqual(self.operations(), [])
+
+    def test_password_persistence_does_not_print_hash(self):
+        script = self.script("files/common/usr/sbin/8311-persist-root-password.sh")
+        self.env["TEST_HASH"] = "$6$fixture$examplehash"
+        self.command("awk", 'printf "%s\\n" "$TEST_HASH"')
+        self.command("fwenv_set", 'printf "%s\\n" "$3" >> "$OPS"')
+        result = self.run_script(script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.operations(), [self.env["TEST_HASH"]])
+        self.assertNotIn(self.env["TEST_HASH"], result.stdout + result.stderr)
+
     def test_first_write_failure_cannot_be_masked_by_second_write(self):
         script = self.script("files/common/usr/sbin/fwenv_set")
         self.command("fw_setenv", '''
@@ -236,6 +267,67 @@ exit 42
         result = self.run_script(script, "--8311", "--", "loid", "-test-value")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.operations(), ["--|8311_loid|-test-value"] * 2)
+
+
+class HookTests(ShellFixture):
+    def setUp(self):
+        super().setUp()
+        self.hook = self.script("examples/vlan_fixes_hook.sh", True)
+        for directory in ("lib", "sys/class/net/eth0_0", "sys/class/net/eth0_0_2"):
+            (self.root / directory).mkdir(parents=True)
+        (self.root / "lib/8311-vlans-lib.sh").write_text('''
+tc_flower_clear() { echo unexpected-clear >> "$OPS"; return 99; }
+tc_flower_replace() {
+    count=$(cat "$FIXTURE/rules" 2>/dev/null || echo 0)
+    count=$((count + 1)); echo "$count" > "$FIXTURE/rules"
+    printf '%s\\n' "$*" >> "$OPS"
+    [ "$count" != "${RULE_FAIL_AT:-0}" ] || return 17
+}
+''', newline="\n")
+        self.env.update(INTERNET_VLAN="41", IPTV_VLAN="43", IPTV_ENABLED="0", INTERNET_CONVERT="0")
+
+    def test_internet_is_untagged_and_iptv_is_opt_in(self):
+        (self.root / "sys/class/net/eth0_0_2").rmdir()
+        result = self.run_script(self.hook)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.operations()), 4)
+        self.assertIn("vlan_id 41 action vlan pop pass", self.operations()[0])
+        self.assertIn("action vlan push id 41 protocol 802.1Q pass", self.operations()[3])
+        self.assertTrue(all("eth0_0_2" not in line for line in self.operations()))
+
+    def test_iptv_retains_a_tag_for_a_router_vlan_interface(self):
+        self.env["IPTV_ENABLED"] = "1"
+        result = self.run_script(self.hook)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.operations()), 7)
+        self.assertIn("action vlan modify id 43 protocol 802.1Q pass", self.operations()[4])
+        self.assertIn("action vlan push id 43 protocol 802.1Q pass", self.operations()[6])
+
+    def test_every_rule_failure_stops_later_rules(self):
+        self.env["IPTV_ENABLED"] = "1"
+        for index in range(1, 8):
+            with self.subTest(index=index):
+                if self.ops.exists(): self.ops.unlink()
+                if (self.root / "rules").exists(): (self.root / "rules").unlink()
+                self.env["RULE_FAIL_AT"] = str(index)
+                result = self.run_script(self.hook)
+                self.assertEqual(result.returncode, 17, result.stderr)
+                self.assertEqual(len(self.operations()), index)
+
+    def test_invalid_values_and_missing_interfaces_make_no_rule_changes(self):
+        for values in ({"INTERNET_VLAN": "0"}, {"INTERNET_VLAN": "4095"},
+                       {"INTERNET_VLAN": "41;echo"}, {"INTERNET_CONVERT": "1"}, {"INTERNET_CONVERT": "4095"},
+                       {"IPTV_ENABLED": "yes"}, {"IPTV_ENABLED": "1", "IPTV_VLAN": "0"}):
+            with self.subTest(values=values):
+                saved = self.env.copy()
+                self.env.update(values)
+                self.assertNotEqual(self.run_script(self.hook).returncode, 0)
+                self.assertEqual(self.operations(), [])
+                self.env = saved
+        self.env["IPTV_ENABLED"] = "1"
+        (self.root / "sys/class/net/eth0_0_2").rmdir()
+        self.assertNotEqual(self.run_script(self.hook).returncode, 0)
+        self.assertEqual(self.operations(), [])
 
 
 class SupportTests(ShellFixture):
@@ -439,6 +531,9 @@ if [ "$cycle" -ge "$MAX_CYCLES" ]; then kill -TERM "$PPID"; fi
 ''')
         self.command("8311-detect-config.sh", '''
 echo detect >> "$OPS"
+count=$(cat "$FIXTURE/detects" 2>/dev/null || echo 0)
+count=$((count + 1)); echo "$count" > "$FIXTURE/detects"
+case ",${DETECT_FAIL_CYCLES:-}," in *,"$count",*) exit 3 ;; esac
 [ "${DETECT_FAIL:-0}" = 0 ] || exit 3
 if [ "${BAD_HASH:-0}" = 1 ]; then echo invalid; else printf '%064d\n' 1; fi
 ''')
@@ -464,6 +559,9 @@ echo cache > "$FIXTURE/tmp/8311-config.sh"
         self.assertEqual(ops.count("fix"), 1)
         self.assertEqual(ops.count("detect"), 4)
         self.assertEqual([x for x in ops if x.startswith("sleep:")], ["sleep:5"] * 4)
+        fields = (self.root / "tmp/8311-vlans.status").read_text().strip().split("\t")
+        self.assertEqual(fields[4:], ["applied", "none", "0"])
+        self.assertGreater(int(fields[2]), 0)
 
     def test_failures_back_off_and_success_resets_delay(self):
         self.env.update(FAIL_UNTIL="3", MAX_CYCLES="6")
@@ -477,6 +575,9 @@ echo cache > "$FIXTURE/tmp/8311-config.sh"
         ops = self.run_daemon()
         self.assertEqual([x for x in ops if x.startswith("sleep:")],
                          ["sleep:5", "sleep:10", "sleep:20", "sleep:40", "sleep:60", "sleep:60", "sleep:60"])
+        fields = (self.root / "tmp/8311-vlans.status").read_text().strip().split("\t")
+        self.assertEqual(fields[4:], ["error", "apply", "60"])
+        self.assertEqual(fields[2], "0")
 
     def test_failed_or_invalid_detection_never_applies_rules(self):
         for failure in ("DETECT_FAIL", "BAD_HASH"):
@@ -515,6 +616,34 @@ echo cache > "$FIXTURE/tmp/8311-config.sh"
         (self.root / "tmp/8311-vlans.reload").touch()
         self.assertNotIn("fix", self.run_daemon())
         self.assertEqual(cache.read_text(), "in use")
+
+    def test_hook_only_without_a_hook_reports_waiting(self):
+        (self.root / "mode").write_text("2\n")
+        self.assertNotIn("detect", self.run_daemon())
+        fields = (self.root / "tmp/8311-vlans.status").read_text().strip().split("\t")
+        self.assertEqual(fields[4:], ["waiting", "hook", "0"])
+
+    def test_detection_recovery_resets_backoff_without_reapplying(self):
+        self.env["DETECT_FAIL_CYCLES"] = "2,4"
+        ops = self.run_daemon()
+        self.assertEqual(ops.count("fix"), 1)
+        self.assertEqual([x for x in ops if x.startswith("sleep:")], ["sleep:5"] * 4)
+
+    def test_invalid_mode_reports_a_configuration_error(self):
+        (self.root / "mode").write_text("3\n")
+        self.assertNotIn("detect", self.run_daemon())
+        fields = (self.root / "tmp/8311-vlans.status").read_text().strip().split("\t")
+        self.assertEqual(fields[3:], ["unknown", "error", "configuration", "0"])
+
+    def test_missing_pon_and_disabled_mode_do_not_report_success(self):
+        (self.root / "sys/devices/virtual/net/gem-omci").rmdir()
+        self.assertNotIn("detect", self.run_daemon())
+        fields = (self.root / "tmp/8311-vlans.status").read_text().strip().split("\t")
+        self.assertEqual(fields[4:], ["waiting", "pon", "0"])
+        (self.root / "mode").write_text("0\n")
+        self.run_daemon()
+        fields = (self.root / "tmp/8311-vlans.status").read_text().strip().split("\t")
+        self.assertEqual(fields[4:], ["disabled", "none", "0"])
 
 
 if __name__ == "__main__":

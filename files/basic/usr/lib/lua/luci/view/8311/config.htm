@@ -22,11 +22,14 @@ local hook_script_placeholder = "#!/bin/sh\n# /ptconf/8311/vlan_fixes_hook.sh\n\
 <script type="text/javascript">
 	var translations = {
 		hookScriptSaved: '<%=translate("Hook script saved.")%>',
-		hookScriptSaveFailed: '<%=translate("Failed to save hook script.")%>'
+		hookScriptSaveFailed: '<%=translate("Failed to save hook script.")%>',
+		hookScriptLoadFailed: '<%=translate("Failed to load hook script.")%>'
 	};
 </script>
 
-<form id="8311-config" action="save" onsubmit="return saveConfig(this);"  method="post" novalidate="novalidate">
+<form id="8311-config" action="save" onsubmit="return saveConfig(this);" method="post" novalidate="novalidate" autocomplete="off"
+	data-unsaved="<%=esc(translate('Unsaved changes. Click Save to apply.'))%>"
+	data-timeout="<%=esc(translate('The request timed out. Changes may already be saved. Reload the page to check before retrying.'))%>">
 <input type="hidden" name="token" value="<%= esc(token) %>" />
 <p id="config-save-message" role="status" aria-live="polite" style="display:none"></p>
 <div id="cbi-system-poncfg" class="cbi-section-node cbi-section-node-tabbed" data-section-id="poncfg" data-initialized="true">
@@ -118,8 +121,12 @@ for _, option in pairs(item.options) do
 			<div class="cbi-value-field">
 				<button id="edit-hook-script-btn" type="button" class="cbi-button cbi-button-edit"><%:Edit hook script%></button>
 				<span class="hook-script-info"><%:Note: The hook script works unless Fix VLANs is set to Disabled.%></span>
+				<div class="cbi-value-description"><%:Saving the hook applies it separately from the configuration form.%></div>
 			</div>
 		</div>
+		<p id="vlan-apply-status" role="status" aria-live="polite" data-url="vlan_status"
+			data-failure="<%=esc(translate('Unable to read VLAN status.'))%>"
+			data-last-applied="<%=esc(translate('Last successful application:'))%>"><%:Reading VLAN status…%></p>
 <% end %>
 <% end %>
 	</div>
@@ -134,7 +141,7 @@ for _, option in pairs(item.options) do
 		<div id="hook-script-message" class="cbi-value-description" style="display:none;"></div>
 		<textarea id="hook-script-textarea" style="resize: none;" placeholder="<%= esc(hook_script_placeholder) %>"></textarea>
 		<div id="hook-script-buttons">
-			<button id="hook-script-save-btn" class="cbi-button cbi-button-save"><%:Save%></button>
+			<button id="hook-script-save-btn" class="cbi-button cbi-button-save"><%:Save and apply hook%></button>
 			<button id="hook-script-cancel-btn" class="cbi-button cbi-button-reset"><%:Cancel%></button>
 		</div>
 	</div>

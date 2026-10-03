@@ -53,7 +53,9 @@ done
 
 NAME="$PREFIX$NAME$SUFFIX"
 
-$B64 && VALUE="$(echo -n "$VALUE" | base64)"
+if $B64; then
+	VALUE=$(printf '%s' "$VALUE" | base64 -w 0) || exit $?
+fi
 
 for i in 0 1; do
 	fw_setenv -- "$NAME" "$VALUE" || exit $?

@@ -884,3 +884,66 @@ msgstr "自定义 VLAN 脚本"
 
 msgid "Settings were saved, but the VLAN hook could not be restored. Review it before rebooting."
 msgstr "配置已保存，但 VLAN 脚本恢复失败。请在重启前检查脚本。"
+
+msgid "Unsaved changes. Click Save to apply."
+msgstr "修改尚未保存，请点击“保存”应用。"
+
+msgid "The request timed out. Changes may already be saved. Reload the page to check before retrying."
+msgstr "请求超时，部分修改可能已经保存。请先刷新页面核对，再决定是否重试。"
+
+msgid "Saving the hook applies it separately from the configuration form."
+msgstr "脚本单独保存并应用，无需再点击主配置页的“保存”。"
+
+msgid "Save and apply hook"
+msgstr "保存并应用脚本"
+
+msgid "Reading VLAN status…"
+msgstr "正在读取 VLAN 应用状态…"
+
+msgid "Unable to read VLAN status."
+msgstr "无法读取 VLAN 应用状态。"
+
+msgid "Last successful application:"
+msgstr "上次成功应用时间："
+
+msgid "VLAN monitor is starting."
+msgstr "VLAN 监控正在启动。"
+
+msgid "VLAN changes are queued."
+msgstr "VLAN 修改已排队，等待应用。"
+
+msgid "Applying VLAN rules."
+msgstr "正在应用 VLAN 规则。"
+
+msgid "VLAN script completed successfully."
+msgstr "VLAN 脚本执行成功。"
+
+msgid "VLAN fixes are disabled."
+msgstr "VLAN 修正已禁用。"
+
+msgid "VLAN status is unavailable."
+msgstr "VLAN 应用状态暂不可用。"
+
+msgid "Hook-only mode needs a saved hook script."
+msgstr "仅脚本模式需要先保存 VLAN 脚本。"
+
+msgid "Waiting for the PON interface."
+msgstr "等待 PON 接口就绪。"
+
+msgid "VLAN detection failed; the monitor will retry."
+msgstr "VLAN 检测失败，监控程序将重试。"
+
+msgid "VLAN application failed; the monitor will retry."
+msgstr "VLAN 应用失败，监控程序将重试。"
+
+msgid "The VLAN hook could not be read; the monitor will retry."
+msgstr "无法读取 VLAN 脚本，监控程序将重试。"
+
+msgid "The VLAN mode is invalid."
+msgstr "VLAN 模式配置无效。"
+
+msgid "VLAN monitor is not running."
+msgstr "VLAN 监控程序未运行。"
+
+msgid "Failed to load hook script."
+msgstr "无法读取 VLAN 脚本。"

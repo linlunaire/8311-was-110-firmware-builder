@@ -9,18 +9,37 @@ flock -n 9 || exit 0
 HOOK="/ptconf/8311/vlan_fixes_hook.sh"
 RELOAD="/tmp/8311-vlans.reload"
 OUTPUT=$(mktemp /tmp/8311-vlans.XXXXXX) || exit 1
-trap 'rm -f "$OUTPUT"' 0
+STATUS="/tmp/8311-vlans.status"
+STATUS_TMP="$OUTPUT.status"
+umask 077
+trap 'rm -f "$OUTPUT" "$STATUS_TMP"' 0
 trap 'exit 0' HUP INT TERM
 
 FIX_ENABLED=$(fwenv_get_8311 "fix_vlans" "1")
 LAST_HASH=""
 REDETECT=false
 RETRY_DELAY=5
+LAST_APPLIED=0
+LAST_STATUS=""
+
+publish_status() {
+	local key="$1:$2:$3:$FIX_ENABLED:$LAST_APPLIED"
+	[ "$key" != "$LAST_STATUS" ] || return 0
+	local mode="$FIX_ENABLED"
+	case "$mode" in 0|1|2) ;; *) mode=unknown ;; esac
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$$" "$(date +%s)" "$LAST_APPLIED" \
+		"$mode" "$1" "$2" "$3" > "$STATUS_TMP" &&
+		mv -f "$STATUS_TMP" "$STATUS" || return 1
+	LAST_STATUS="$key"
+}
+
+publish_status starting none 0
 
 echo "8311 VLANs daemon: start monitoring" | to_console
 while true; do
 	DELAY=5
 	FAILED=false
+	FAIL_STAGE=none
 	# Consume the notification before applying so a concurrent save is not lost.
 	if [ -f "$RELOAD" ]; then
 		rm -f "$RELOAD"
@@ -28,6 +47,7 @@ while true; do
 		LAST_HASH=""
 		REDETECT=true
 		RETRY_DELAY=5
+		publish_status scheduled none 0
 	fi
 
 	CMD=""
@@ -49,29 +69,45 @@ while true; do
 			HASH=$(cat "$OUTPUT")
 			HOOK_HASH="absent"
 			if [ -f "$HOOK" ]; then
-				HOOK_HASH=$(sha256sum "$HOOK") || FAILED=true
+				HOOK_HASH=$(sha256sum "$HOOK") || { FAILED=true; FAIL_STAGE=hook; }
 			fi
 			HASH="$HASH:$HOOK_HASH"
 			if ! $FAILED && [ "$HASH" != "$LAST_HASH" ]; then
 				# Cached detection also contains the old local VLAN settings.
 				$REDETECT && CMD="rm -f /tmp/8311-config.sh && $CMD"
+				publish_status applying none 0
 				if timeout -k 5 30 flock -n /tmp/8311-fix-vlans.lock -c "$CMD" > "$OUTPUT" 2>&1; then
 					LAST_HASH="$HASH"
 					REDETECT=false
 					RETRY_DELAY=5
+					LAST_APPLIED=$(date +%s)
+					publish_status applied none 0
 					echo "8311 VLANs daemon: configuration applied" | to_console
 					tail -c 8192 "$OUTPUT" | to_console
 				else
 					FAILED=true
+					FAIL_STAGE=apply
 				fi
+			elif ! $FAILED; then
+				RETRY_DELAY=5
+				publish_status applied none 0
 			fi
 		else
 			FAILED=true
+			FAIL_STAGE=detect
 		fi
+	else
+		case "$FIX_ENABLED" in
+			0) publish_status disabled none 0 ;;
+			2) if [ -z "$CMD" ]; then publish_status waiting hook 0; else publish_status waiting pon 0; fi ;;
+			1) publish_status waiting pon 0 ;;
+			*) publish_status error configuration 0 ;;
+		esac
 	fi
 
 	if $FAILED; then
 		DELAY=$RETRY_DELAY
+		publish_status error "$FAIL_STAGE" "$DELAY"
 		echo "8311 VLANs daemon: detection or apply failed; retry in $DELAY seconds" | to_console
 		RETRY_DELAY=$((RETRY_DELAY * 2))
 		[ "$RETRY_DELAY" -le 60 ] || RETRY_DELAY=60

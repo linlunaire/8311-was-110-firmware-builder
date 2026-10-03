@@ -41,6 +41,7 @@ function index()
 	entry({"admin", "8311", "save"}, post("action_save"))
 	entry({"admin", "8311", "get_hook_script"}, call("action_get_hook_script")).leaf=true
 	entry({"admin", "8311", "save_hook_script"}, post("action_save_hook_script")).leaf=true
+	entry({"admin", "8311", "vlan_status"}, call("action_vlan_status")).leaf=true
 	entry({"admin", "8311", "pontop"}, call("action_pontop")).leaf=true
 	entry({"admin", "8311", "pon_dump"}, call("action_pon_dump")).leaf=true
 	entry({"admin", "8311", "gpon_status"}, call("action_gpon_status")).leaf = true
@@ -213,6 +214,10 @@ function fwenvs_8311()
 	end
 
 	local ipv4_regex = "^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$"
+	local partial_mask = "(?:254|252|248|240|224|192|128|0)"
+	local netmask_regex = "^(?:(?:255\\.){3}(?:255|" .. partial_mask .. ")|" ..
+		"(?:255\\.){2}" .. partial_mask .. "\\.0|255\\." .. partial_mask ..
+		"\\.0\\.0|" .. partial_mask .. "(?:\\.0){3})$"
 
 	return {{
 			id="pon",
@@ -617,7 +622,7 @@ function fwenvs_8311()
 					name=translate("Subnet Mask"),
 					description=translate("Management subnet mask. Defaults to 255.255.255.0"),
 					maxlength=15,
-					pattern=ipv4_regex,
+					pattern=netmask_regex,
 					type="text",
 					default="255.255.255.0"
 				},{
@@ -881,11 +886,34 @@ function populate_8311_fwenvs()
 end
 
 function action_config()
+	http.header("Cache-Control", "no-store")
 	local fwenvs = populate_8311_fwenvs()
 
 	ltemplate.render("8311/config", {
 		fwenvs=fwenvs
 	})
+end
+
+function action_vlan_status()
+	local status = tools.vlan_status()
+	local messages = {
+		starting = "VLAN monitor is starting.", scheduled = "VLAN changes are queued.",
+		applying = "Applying VLAN rules.", applied = "VLAN script completed successfully.",
+		disabled = "VLAN fixes are disabled.", unknown = "VLAN status is unavailable."
+	}
+	if status.state == "waiting" then
+		status.message = translate(status.error_stage == "hook" and "Hook-only mode needs a saved hook script." or "Waiting for the PON interface.")
+	elseif status.state == "error" then
+		local failures = { detect="VLAN detection failed; the monitor will retry.", apply="VLAN application failed; the monitor will retry.",
+			hook="The VLAN hook could not be read; the monitor will retry.", configuration="The VLAN mode is invalid." }
+		status.message = translate(failures[status.error_stage] or messages.unknown)
+	else
+		status.message = translate(messages[status.state] or messages.unknown)
+	end
+	if status.state ~= "unknown" and not status.running then status.message = translate("VLAN monitor is not running.") end
+	http.header("Cache-Control", "no-store")
+	http.prepare_content("application/json")
+	http.write_json(status)
 end
 
 local function save_config()

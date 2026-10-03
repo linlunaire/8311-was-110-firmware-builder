@@ -116,6 +116,28 @@ function request_vlan_reload()
 	return fs.writefile("/tmp/8311-vlans.reload", "\n") == 1
 end
 
+function vlan_status()
+	local result = { state = "unknown", running = false, last_applied_at = 0, error_stage = "none", retry_in = 0 }
+	local raw = fs.readfile("/tmp/8311-vlans.status")
+	if type(raw) == "string" and #raw <= 256 then
+		local pid, observed, applied, mode, state, stage, retry = raw:match("^(%d+)\t(%d+)\t(%d+)\t(%w+)\t([a-z]+)\t([a-z]+)\t(%d+)\n$")
+		local states = { starting=true, scheduled=true, applying=true, applied=true, disabled=true, waiting=true, error=true }
+		local stages = { none=true, hook=true, pon=true, detect=true, apply=true, configuration=true }
+		local modes = { ["0"]=true, ["1"]=true, ["2"]=true, unknown=true }
+		if pid and modes[mode] and states[state] and stages[stage] and tonumber(retry) <= 60 and
+			tonumber(pid) >= 1 and tonumber(pid) <= 4194304 and
+			tonumber(observed) <= 4294967295 and tonumber(applied) <= 4294967295 then
+			result.state, result.mode = state, mode
+			result.observed_at, result.last_applied_at = tonumber(observed), tonumber(applied)
+			result.error_stage, result.retry_in = stage, tonumber(retry)
+			local command = fs.readfile("/proc/" .. pid .. "/cmdline")
+			result.running = type(command) == "string" and command:find("8311-vlansd.sh", 1, true) ~= nil
+		end
+	end
+	if fs.readfile("/tmp/8311-vlans.reload") then result.state = "scheduled" end
+	return result
+end
+
 -- The same field definitions supply the HTML constraints and server checks.
 -- PCRE patterns remain PCRE; Lua patterns have different syntax.
 function validate_config_value(item, value)

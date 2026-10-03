@@ -29,6 +29,7 @@
 
 - [构建与测试](docs/building.md)
 - [配置字段](docs/configuration-reference.md)
+- [自定义 VLAN 与 IPTV](docs/vlan-hook.md)
 - [验证记录](docs/validation.md)
 - [固件槽说明](docs/firmware-banks.md)
 

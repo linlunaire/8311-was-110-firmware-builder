@@ -307,6 +307,66 @@ check("environment writes report failure and verify readback", function()
 	assert(tools.fwenv_set("fix_vlans", "1", true, false))
 end)
 
+check("VLAN status reports only bounded states, pending reloads and a live monitor", function()
+	local s, tools, controller = setup()
+	assert(tools.vlan_status().state == "unknown")
+	s.files["/tmp/8311-vlans.status"] = "123\t100\t99\t2\tapplied\tnone\t0\n"
+	s.files["/proc/123/cmdline"] = "/bin/sh\0/usr/sbin/8311-vlansd.sh\0"
+	local status = tools.vlan_status()
+	assert(status.state == "applied" and status.running and status.last_applied_at == 99)
+	controller.action_vlan_status()
+	assert(s.json.message == "VLAN script completed successfully." and s.headers["Cache-Control"] == "no-store")
+	s.files["/tmp/8311-vlans.reload"] = "\n"
+	assert(tools.vlan_status().state == "scheduled")
+	s.files["/tmp/8311-vlans.reload"] = nil
+	s.files["/proc/123/cmdline"] = nil
+	controller.action_vlan_status()
+	assert(s.json.message == "VLAN monitor is not running.")
+	for _, raw in ipairs({ "secret-hook-output", string.rep("x", 257), "123\t100\t0\t2\terror\tapply\t999\n",
+		"123\t" .. string.rep("9", 100) .. "\t0\t2\tapplied\tnone\t0\n" }) do
+		s.files["/tmp/8311-vlans.status"] = raw
+		assert(tools.vlan_status().state == "unknown")
+	end
+	s.files["/tmp/8311-vlans.status"] = "123\t100\t0\t2\terror\tapply\t10\n"
+	s.files["/proc/123/cmdline"] = "/usr/sbin/8311-vlansd.sh\0"
+	controller.action_vlan_status()
+	assert(s.json.message:find("application failed", 1, true) and s.json.retry_in == 10)
+	assert(not s.json.output and not s.json.hook)
+	s.files["/tmp/8311-vlans.status"] = "123\t100\t0\tunknown\terror\tconfiguration\t0\n"
+	controller.action_vlan_status()
+	assert(s.json.message == "The VLAN mode is invalid.")
+end)
+
+check("management masks require contiguous bits in saves and recovery", function()
+	local s, tools, controller = setup()
+	local categories = controller.fwenvs_8311()
+	local field
+	for _, category in ipairs(categories) do
+		for _, item in ipairs(category.items) do if item.id == "netmask" then field = item end end
+	end
+	assert(field)
+	for prefix = 0, 32 do
+		local octets = {}
+		for index = 0, 3 do
+			local bits = math.min(8, math.max(0, prefix - index * 8))
+			octets[#octets + 1] = tostring(256 - 2 ^ (8 - bits))
+		end
+		local mask = table.concat(octets, ".")
+		assert(tools.validate_config_value(field, mask), mask)
+	end
+	local recovery = require "8311.recovery"
+	for _, mask in ipairs({ "255.0.255.0", "255.255.253.0", "128.128.0.0", "0.0.0.1", "255.255.255.256" }) do
+		assert(not tools.validate_config_value(field, mask), mask)
+		assert(not recovery.plan("8311_netmask=" .. mask .. "\n", categories, {}, false, false, ""), mask)
+	end
+	assert(recovery.plan("8311_netmask=255.255.254.0\n", categories, {}, false, false, ""))
+	controller.populate_8311_fwenvs = function() return {{ items = { field } }} end
+	tools.fwenv_set = function() error("Invalid mask reached the writer") end
+	s.form = { netmask = "255.0.255.0" }
+	controller.action_save()
+	assert(s.status == 400 and s.json.errors.netmask)
+end)
+
 check("all fields are validated before the first configuration write", function()
 	local s, tools, controller = setup()
 	controller.populate_8311_fwenvs = function() return {{ items = {

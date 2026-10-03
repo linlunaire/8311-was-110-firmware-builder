@@ -24,7 +24,7 @@ jobs:
       - name: Check shell syntax
         run: |
           bash -n build.sh
-          shellcheck --severity=error build.sh extract.sh files/common/usr/sbin/8311-firmware-upgrade.sh files/common/usr/sbin/8311-vlansd.sh files/common/usr/sbin/8311-support.sh files/common/usr/sbin/8311-rx_los.sh files/common/usr/sbin/fwenv_set files/common/usr/sbin/fwenv_get
+          shellcheck --severity=error build.sh extract.sh files/common/usr/sbin/8311-firmware-upgrade.sh files/common/usr/sbin/8311-vlansd.sh files/common/usr/sbin/8311-support.sh files/common/usr/sbin/8311-rx_los.sh files/common/usr/sbin/8311-persist-root-password.sh files/common/usr/sbin/fwenv_set files/common/usr/sbin/fwenv_get examples/vlan_fixes_hook.sh
       - name: Run isolated device and LuCI regressions
         env:
           TEST_SHELL: ${{ matrix.shell }}
