@@ -9,6 +9,7 @@
 - 状态查询与页面轮询优化，减少重复读取。
 - VLAN 自动修正、失败重试和配置变更刷新。
 - 简体中文界面，适配桌面与手机。
+- 轻量管理主题，支持跟随系统、浅色与深色。
 
 ## 下载与升级
 
@@ -29,6 +30,7 @@
 
 - [构建与测试](docs/building.md)
 - [配置字段](docs/configuration-reference.md)
+- [轻量管理主题](docs/theme.md)
 - [自定义 VLAN 与 IPTV](docs/vlan-hook.md)
 - [验证记录](docs/validation.md)
 - [全项目检查与改进](docs/code-audit.md)
