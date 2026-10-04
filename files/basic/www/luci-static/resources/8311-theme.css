@@ -146,7 +146,7 @@
 .luci-login #maincontent > form { margin-top: auto; margin-bottom: auto; }
 .luci-login .cbi-map { padding: 0; background: none; border: 0; border-radius: 0; }
 .luci-login h2 { padding: 0; margin-bottom: 12px; background: none; box-shadow: none; font-size: 20px; }
-.luci-login .cbi-section { margin: 16px 0 0; padding: 0; border: 0; box-shadow: none; }
+.luci-login .cbi-section { margin: 16px 0 0; padding: 0; background: none; border: 0; box-shadow: none; }
 .luci-login .cbi-value-title { float: none !important; display: block; width: auto !important; padding: 0 0 6px !important; text-align: left !important; }
 .luci-login .cbi-value-field { margin-left: 0; }
 .luci-login input[type="text"], .luci-login input[type="password"] { width: 100%; padding-left: 0; border-width: 0 0 1px; border-radius: 0; background: none; }
