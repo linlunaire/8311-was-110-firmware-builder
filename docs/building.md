@@ -59,6 +59,7 @@ node tests/status_poll_smoke.cjs
 ```sh
 node tests/frontend_smoke.cjs
 node tests/management_frontend.cjs
+node tests/theme_frontend.cjs
 ```
 
 可用 `BROWSER_CHANNEL=msedge` 或 `chrome` 选择已安装的浏览器，或设置

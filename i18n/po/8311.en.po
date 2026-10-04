@@ -653,3 +653,31 @@ msgstr "Cancel firmware upgrade and cleanup"
 
 msgid "Reboot to new firmware"
 msgstr "Reboot to new firmware"
+
+#: files/basic/usr/lib/lua/luci/view/themes/bootstrap/header.htm
+msgid "Follow system"
+msgstr "Follow system"
+
+#: files/basic/usr/lib/lua/luci/view/themes/bootstrap/header.htm
+msgid "Light"
+msgstr "Light"
+
+#: files/basic/usr/lib/lua/luci/view/themes/bootstrap/header.htm
+msgid "Dark"
+msgstr "Dark"
+
+#: files/basic/usr/lib/lua/luci/view/themes/bootstrap/header.htm
+msgid "Toggle navigation"
+msgstr "Toggle navigation"
+
+#: files/basic/usr/lib/lua/luci/view/themes/bootstrap/header.htm
+msgid "Close navigation"
+msgstr "Close navigation"
+
+#: files/basic/usr/lib/lua/luci/view/themes/bootstrap/header.htm
+msgid "Appearance"
+msgstr "Appearance"
+
+#: files/basic/usr/lib/lua/luci/view/themes/bootstrap/header.htm
+msgid "Skip to content"
+msgstr "Skip to content"

@@ -1043,3 +1043,31 @@ msgstr "正在加载…"
 
 msgid "Unable to load diagnostics. Retry shortly."
 msgstr "无法读取诊断信息，请稍后重试。"
+
+#: files/basic/usr/lib/lua/luci/view/themes/bootstrap/header.htm
+msgid "Follow system"
+msgstr "跟随系统"
+
+#: files/basic/usr/lib/lua/luci/view/themes/bootstrap/header.htm
+msgid "Light"
+msgstr "浅色"
+
+#: files/basic/usr/lib/lua/luci/view/themes/bootstrap/header.htm
+msgid "Dark"
+msgstr "深色"
+
+#: files/basic/usr/lib/lua/luci/view/themes/bootstrap/header.htm
+msgid "Toggle navigation"
+msgstr "打开或收起导航"
+
+#: files/basic/usr/lib/lua/luci/view/themes/bootstrap/header.htm
+msgid "Close navigation"
+msgstr "关闭导航"
+
+#: files/basic/usr/lib/lua/luci/view/themes/bootstrap/header.htm
+msgid "Appearance"
+msgstr "外观"
+
+#: files/basic/usr/lib/lua/luci/view/themes/bootstrap/header.htm
+msgid "Skip to content"
+msgstr "跳到内容"

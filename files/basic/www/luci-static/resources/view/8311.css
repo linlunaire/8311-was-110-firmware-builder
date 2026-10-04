@@ -1,10 +1,10 @@
 select.error, input.error {
-	border-color: red !important;
-	background-color: lightpink !important;
+	border-color: var(--danger, red) !important;
+	background-color: var(--error-bg, lightpink) !important;
 }
 
 label.error {
-	color: red !important;
+	color: var(--danger, red) !important;
 }
 
 input#firmware-file::file-selector-button {

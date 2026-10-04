@@ -57,6 +57,7 @@ jobs:
         run: |
           node tests/frontend_smoke.cjs
           node tests/management_frontend.cjs
+          node tests/theme_frontend.cjs
 
   firmware:
     name: Build verified basic firmware
