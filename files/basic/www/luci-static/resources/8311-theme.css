@@ -189,6 +189,7 @@
 .luci-login header { position: absolute; top: 0; left: 5%; width: min(416px,90%); }
 .luci-login header .fill { padding: 38px 36px 0; background: none; }
 .luci-login header .container { min-height: 64px; flex-wrap: wrap; gap: 16px; }
+.luci-login header .container::before, .luci-login header .container::after { display: none; }
 .luci-login header .brand { max-width: 100%; color: var(--text); font-size: 25px; }
 .luci-login header .brand span { color: var(--muted); }
 .luci-login .theme-controls { position: fixed; top: 24px; right: 24px; margin-left: 0; }

@@ -92,7 +92,7 @@ function fixture(name) {
 <script src="/luci-static/resources/8311-theme.js"></script><script src="/luci-static/resources/cbi.js"></script></head>
 <body class="luci-8311 ${anonymous ? 'luci-login' : 'luci-authenticated'}" data-page="${dispatchpath.join('-')}"><header><div class="fill"><div class="container">
 ${anonymous ? '' : '<button id="8311-menu-toggle" type="button" aria-expanded="false" aria-controls="8311-navigation">Menu</button>'}
-<a class="brand" href="/cgi-bin/luci/admin">${anonymous ? 'WAS-110-login-fixture' : 'WAS-110'}<span>linlunaire</span></a><div class="theme-controls"><div id="indicators"></div>
+<a class="brand" href="/cgi-bin/luci/admin">${anonymous ? 'WAS-110-login-fixture-with-long-hostname' : 'WAS-110'}<span>linlunaire</span></a><div class="theme-controls"><div id="indicators"></div>
 ${appearance()}</div>
 ${anonymous ? '' : '<nav id="8311-navigation"><a class="brand sidebar-brand" href="/cgi-bin/luci/admin">WAS-110<span>linlunaire</span></a><ul id="topmenu" class="nav" style="display:none"></ul></nav><button id="8311-menu-backdrop" type="button" hidden>Close</button>'}
 </div></div></header><div id="maincontent" class="container"><div id="tabmenu" style="display:none"></div>
