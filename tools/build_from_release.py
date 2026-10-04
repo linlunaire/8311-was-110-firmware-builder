@@ -113,6 +113,8 @@ def build(base, output, version):
         # This base already has vendor/binary/package patches; never apply them twice.
         for variant in ("common", "basic"):
             run("cp", "-a", str(ROOT / "files" / variant) + "/.", str(root) + "/")
+        # The personalized LuCI footer no longer uses the inherited bitmap.
+        (root / "www/luci-static/resources/logo_8311.png").unlink(missing_ok=True)
         for name, folder in (("8311-detect-config.sh", "usr/sbin"),
                              ("8311-fix-vlans.sh", "usr/sbin"), ("8311-vlans-lib.sh", "lib")):
             run("cp", "-a", ROOT / "8311-xgspon-bypass" / name, root / folder / name)
