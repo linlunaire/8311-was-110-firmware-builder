@@ -65,6 +65,11 @@ function appearance() {
     .match(/<div id="8311-theme-toggle"[\s\S]*?<\/div>/)[0].replace(/<%:([^%]+)%>/g, '$1');
 }
 
+function appearanceInit() {
+  return fs.readFileSync(path.join(root, 'files/basic/usr/lib/lua/luci/view/themes/bootstrap/header.htm'), 'utf8')
+    .match(/<script data-theme-init>[\s\S]*?<\/script>/)[0];
+}
+
 function login() {
   return fs.readFileSync(path.join(root, 'files/basic/usr/lib/lua/luci/view/sysauth.htm'), 'utf8')
     .match(/<form[\s\S]*?<\/form>/)[0]
@@ -88,8 +93,9 @@ function fixture(name) {
   const anonymous = name === 'login';
   const dispatchpath = (anonymous ? routes.config : routes[name]).replace('/cgi-bin/luci/', '').split('/');
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+${appearanceInit()}
 <link rel="stylesheet" href="/luci-static/bootstrap/cascade.css"><link rel="stylesheet" href="/luci-static/resources/8311-theme.css">
-<script src="/luci-static/resources/8311-theme.js"></script><script src="/luci-static/resources/cbi.js"></script></head>
+<script defer src="/luci-static/resources/8311-theme.js"></script><script src="/luci-static/resources/cbi.js"></script></head>
 <body class="luci-8311 ${anonymous ? 'luci-login' : 'luci-authenticated'}" data-page="${dispatchpath.join('-')}"><header><div class="fill"><div class="container">
 ${anonymous ? '' : '<button id="8311-menu-toggle" type="button" aria-expanded="false" aria-controls="8311-navigation">Menu</button>'}
 <a class="brand" href="/cgi-bin/luci/admin">${anonymous ? 'WAS-110-login-fixture-with-long-hostname' : 'WAS-110'}<span>linlunaire</span></a><div class="theme-controls"><div id="indicators"></div>
@@ -110,6 +116,8 @@ ${footer()}</div>${anonymous ? '' : "<script>L.require('menu-bootstrap')</script
 }
 
 const requests = [];
+let heldThemeScript = null;
+let themeScriptPending = false;
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
   requests.push({ method: req.method, path: url.pathname });
@@ -119,6 +127,9 @@ const server = http.createServer(async (req, res) => {
     const fallback = path.resolve(native, relative);
     const file = override && override.startsWith(resources + path.sep) && fs.existsSync(override) ? override : fallback;
     if (!file.startsWith(resources + path.sep) && !file.startsWith(native + path.sep) || !fs.existsSync(file)) { if(process.env.THEME_DEBUG) console.error('Missing fixture resource:',url.pathname); res.writeHead(404).end(); return; }
+    if (relative === 'resources/8311-theme.js' && heldThemeScript) {
+      themeScriptPending=true;await heldThemeScript;themeScriptPending=false;
+    }
     res.setHeader('Content-Type', file.endsWith('.css') ? 'text/css' : file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.png') ? 'image/png' : 'application/javascript');
     res.end(fs.readFileSync(file));
   } else if (url.pathname.endsWith('/admin/menu')) {
@@ -312,6 +323,26 @@ function contrast(foreground, background) {
       }
     }
     console.log('ok - six pages fit 320–1280px and remain readable in both appearances');
+
+    const early = await browser.newContext({colorScheme:'light'});
+    await early.addInitScript(()=>localStorage.setItem('8311-theme','dark'));
+    const firstPaint = await early.newPage();
+    firstPaint.on('pageerror',error=>errors.push(error.message));
+    let releaseThemeScript;
+    heldThemeScript = new Promise(resolve=>{releaseThemeScript=resolve;});
+    try {
+      await firstPaint.goto(base+routes.login,{waitUntil:'commit'});
+      await firstPaint.locator('input[name="luci_password"]').waitFor();
+      assert(themeScriptPending,'theme script finished before the early rendering check');
+      assert.equal(await firstPaint.locator('html').getAttribute('data-color'),'dark');
+      assert.equal(await firstPaint.locator('body.luci-login').count(),1);
+    } finally {
+      releaseThemeScript();heldThemeScript=null;
+    }
+    await firstPaint.waitForLoadState('networkidle');
+    assert.equal(await firstPaint.locator('[data-theme-mode="dark"]').getAttribute('aria-pressed'),'true');
+    await early.close();
+    console.log('ok - saved dark appearance and login form render before the deferred theme script finishes');
 
     const notices = await page.request.get(base+'/luci-static/resources/8311-notices.html');
     assert(notices.ok());

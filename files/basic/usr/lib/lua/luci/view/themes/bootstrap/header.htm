@@ -23,6 +23,10 @@
 		<meta charset="utf-8">
 		<title><%=striptags((boardinfo.hostname or "?") .. ((node and node.title) and ' - ' .. translate(node.title) or ''))%> - LuCI</title>
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<script data-theme-init>
+			(function(){var mode='system';try{var saved=localStorage.getItem('8311-theme');if(saved==='light'||saved==='dark')mode=saved;}catch(e){}
+			var root=document.documentElement;root.dataset.theme=mode;root.dataset.color=mode==='dark'||(mode==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';})();
+		</script>
 		<link rel="stylesheet" href="<%=media%>/cascade.css?v=git-22.045.73925-36e5c1c">
 		<link rel="stylesheet" href="<%=resource%>/8311-theme.css?v=<%=version.revision%>">
 		<link rel="shortcut icon" href="<%=media%>/favicon.png">
@@ -32,7 +36,7 @@
 		<% if css then %>
 			<style title="text/css"><%=css%></style>
 		<% end -%>
-		<script src="<%=resource%>/8311-theme.js?v=<%=version.revision%>"></script>
+		<script defer src="<%=resource%>/8311-theme.js?v=<%=version.revision%>"></script>
 		<script src="<%=url('admin/translations', luci.i18n.context.lang)%>?v=git-22.045.73925-36e5c1c"></script>
 		<script src="<%=resource%>/cbi.js?v=git-22.045.73925-36e5c1c"></script>
 	</head>

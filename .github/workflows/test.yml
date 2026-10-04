@@ -50,6 +50,11 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/8311-browser-tests" --no-package-lock playwright@1.62.1
           node "$RUNNER_TEMP/8311-browser-tests/node_modules/playwright/cli.js" install --with-deps ${{ matrix.engine }}
+      - name: Verify generated theme resources
+        if: matrix.engine == 'chromium'
+        run: |
+          npm ci --prefix tools/theme --ignore-scripts --no-audit --no-fund
+          npm run check --prefix tools/theme
       - name: Test backup download, restore and firmware forms
         env:
           NODE_PATH: ${{ runner.temp }}/8311-browser-tests/node_modules

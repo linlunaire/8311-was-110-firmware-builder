@@ -1,0 +1,13 @@
+{
+  "name": "was110-theme-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "node build.mjs --check"
+  },
+  "devDependencies": {
+    "lightningcss": "1.33.0",
+    "rolldown": "1.2.9"
+  }
+}
