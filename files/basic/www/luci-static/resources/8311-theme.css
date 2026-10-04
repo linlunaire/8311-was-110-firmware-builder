@@ -189,9 +189,9 @@
 .luci-login header { position: absolute; top: 0; left: 5%; width: min(416px,90%); }
 .luci-login header .fill { padding: 38px 36px 0; background: none; }
 .luci-login header .container { min-height: 64px; flex-wrap: wrap; gap: 16px; }
-.luci-login header .brand { color: var(--text); font-size: 25px; }
+.luci-login header .brand { max-width: 100%; color: var(--text); font-size: 25px; }
 .luci-login header .brand span { color: var(--muted); }
-.luci-login .theme-controls { margin-left: 0; }
+.luci-login .theme-controls { position: fixed; top: 24px; right: 24px; margin-left: 0; }
 .luci-login .theme-switch { background: var(--canvas); border-color: var(--line); }
 .luci-login .theme-switch button { color: var(--muted); }
 .luci-login .theme-switch button[aria-pressed="true"] { background: var(--surface); color: var(--accent); box-shadow: 0 1px 5px rgba(0,0,0,.15); }
@@ -204,6 +204,7 @@
 .luci-login .cbi-value-field { margin-left: 0; }
 .luci-login input[type="text"], .luci-login input[type="password"] { width: 100%; padding-left: 0; border-width: 0 0 1px; border-radius: 0; background: none; }
 .luci-login .cbi-page-actions { display: flex; gap: 8px; margin-top: 8px; border: 0; }
+.luci-login .cbi-page-actions::after { display: none; }
 .luci-login .cbi-page-actions .cbi-button-apply { flex: 1; }
 .luci-login footer { margin-top: 40px; border: 0; }
 .luci-login .firmware-branding, .luci-login .firmware-details { display: block; text-align: center; }
@@ -235,6 +236,7 @@
 	.luci-8311[data-page="admin-status-routes"] .table .th, .luci-8311[data-page="admin-status-routes"] .table .td { overflow-wrap: normal; white-space: nowrap; }
 	.luci-login header { left: 0; width: 100%; }
 	.luci-login header .fill { padding: 24px 28px 0; }
+	.luci-login header .brand { max-width: calc(100% - 110px); }
 	.luci-login #maincontent { width: 100%; min-height: 100vh; margin: 0; padding: 180px 28px 24px; }
 }
 @media (prefers-reduced-motion: reduce) {

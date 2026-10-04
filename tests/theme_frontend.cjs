@@ -65,6 +65,14 @@ function appearance() {
     .match(/<div id="8311-theme-toggle"[\s\S]*?<\/div>/)[0].replace(/<%:([^%]+)%>/g, '$1');
 }
 
+function login() {
+  return fs.readFileSync(path.join(root, 'files/basic/usr/lib/lua/luci/view/sysauth.htm'), 'utf8')
+    .match(/<form[\s\S]*?<\/form>/)[0]
+    .replace(/<%- if fuser then %>[\s\S]*?<% end -%>/, '')
+    .replace(/<%=pcdata\(FULL_REQUEST_URI\)%>/g, routes.config)
+    .replace(/<%=duser%>/g, 'root').replace(/<%:([^%]+)%>/g, '$1');
+}
+
 function backup() {
   return '<link rel="stylesheet" href="/luci-static/resources/view/8311.css">' +
     fs.readFileSync(path.join(root, 'files/basic/usr/lib/lua/luci/view/8311/firmware.htm'), 'utf8')
@@ -84,7 +92,7 @@ function fixture(name) {
 <script src="/luci-static/resources/8311-theme.js"></script><script src="/luci-static/resources/cbi.js"></script></head>
 <body class="luci-8311 ${anonymous ? 'luci-login' : 'luci-authenticated'}" data-page="${dispatchpath.join('-')}"><header><div class="fill"><div class="container">
 ${anonymous ? '' : '<button id="8311-menu-toggle" type="button" aria-expanded="false" aria-controls="8311-navigation">Menu</button>'}
-<a class="brand" href="/cgi-bin/luci/admin">WAS-110<span>linlunaire</span></a><div class="theme-controls"><div id="indicators"></div>
+<a class="brand" href="/cgi-bin/luci/admin">${anonymous ? 'WAS-110-login-fixture' : 'WAS-110'}<span>linlunaire</span></a><div class="theme-controls"><div id="indicators"></div>
 ${appearance()}</div>
 ${anonymous ? '' : '<nav id="8311-navigation"><a class="brand sidebar-brand" href="/cgi-bin/luci/admin">WAS-110<span>linlunaire</span></a><ul id="topmenu" class="nav" style="display:none"></ul></nav><button id="8311-menu-backdrop" type="button" hidden>Close</button>'}
 </div></div></header><div id="maincontent" class="container"><div id="tabmenu" style="display:none"></div>
@@ -94,8 +102,8 @@ ${anonymous ? '' : '<nav id="8311-navigation"><a class="brand sidebar-brand" hre
   pollinterval: 5, ubuspath: '/ubus/', sessionid: anonymous ? null : '00000000000000000000000000000000',
   apply_rollback: 90, apply_holdoff: 4, apply_timeout: 5, apply_display: 1.5
 })});</script>
-${name==='routes' ? '' : '<h2>'+(anonymous ? 'Authorization Required' : name)+'</h2>'}
-${['overview','routes'].includes(name) ? '<div id="theme-native-view"></div><script src="/luci-static/resources/theme-status-helper.js"></script><script>('+renderNativeStatus.toString()+')('+JSON.stringify(name)+')</script>' : name==='firmware' ? backup() : `<form method="post"><div class="cbi-map"><div class="cbi-section">
+${anonymous || name==='routes' ? '' : '<h2>'+name+'</h2>'}
+${anonymous ? login() : ['overview','routes'].includes(name) ? '<div id="theme-native-view"></div><script src="/luci-static/resources/theme-status-helper.js"></script><script>('+renderNativeStatus.toString()+')('+JSON.stringify(name)+')</script>' : name==='firmware' ? backup() : `<form method="post"><div class="cbi-map"><div class="cbi-section">
 <div class="cbi-value"><label class="cbi-value-title" for="fixture-value">${anonymous ? 'Username' : 'PON Serial Number'}</label><div class="cbi-value-field"><input type="text" id="fixture-value" name="gpon_sn" value="TEST12345678"></div></div>
 <div class="cbi-value-description">Device settings and connection diagnostics.</div></div></div></form>`}
 ${footer()}</div>${anonymous ? '' : "<script>L.require('menu-bootstrap')</script>"}</body></html>`;
@@ -268,6 +276,20 @@ function contrast(foreground, background) {
           await page.setViewportSize({width,height:900});
           const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1);
           assert(!overflow,`${name} overflows at ${width}px in ${color}`);
+          if(name==='login') {
+            assert.equal(await page.locator('form [type="reset"]').count(),0,'login form still has a reset button');
+            assert.equal(await page.locator('form [type="submit"]').count(),1,'login form lost its submit button');
+            const layout=await page.evaluate(()=>{
+              const group=document.getElementById('8311-theme-toggle');
+              const box=group.getBoundingClientRect();
+              const brand=document.querySelector('header .container > .brand').getBoundingClientRect();
+              return {top:box.top,right:innerWidth-box.right,gap:box.left-brand.right,
+                position:getComputedStyle(group.parentElement).position};
+            });
+            assert(layout.position==='fixed' && layout.top>=16 && layout.top<=32 && layout.right>=16 && layout.right<=32,
+              `login appearance is not in the viewport's top-right corner at ${width}px: ${JSON.stringify(layout)}`);
+            assert(layout.gap>=8,`login device name overlaps appearance controls at ${width}px: ${JSON.stringify(layout)}`);
+          }
           if(name==='routes' && width<=760) {
             const table=await page.locator('.table').nth(1).evaluate(element=>({
               viewport:element.clientWidth,content:element.scrollWidth,
