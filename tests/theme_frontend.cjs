@@ -155,6 +155,31 @@ function contrast(foreground, background) {
     assert.equal(new URL(page.url()).pathname,routes.firmware);
     console.log('ok - native menu routes and keyboard group toggles remain usable');
 
+    for(const color of ['light','dark']) {
+      await page.evaluate(color=>localStorage.setItem('8311-theme',color),color);
+      await page.goto(base+routes.config);await page.waitForLoadState('networkidle');
+      const palette=await page.evaluate(()=>{
+        const widgets=document.createElement('div');widgets.id='theme-widget-fixture';
+        widgets.innerHTML='<div class="table"><div class="tr cbi-section-table-titles"><div class="th">Settings</div></div></div>'+
+          '<div class="cbi-dropdown" open><ul class="dropdown"><li display>Option</li><li display selected>Selected</li></ul></div>'+
+          '<div class="cbi-progressbar" title="42%"><div style="width:42%"></div></div>';
+        document.getElementById('maincontent').appendChild(widgets);
+        L.ui.showModal('Fixture dialog',[E('p','Readable dialog content')]);
+        function pair(element,pseudo,background) {
+          let surface=background || element;
+          while(surface.parentElement && getComputedStyle(surface).backgroundColor==='rgba(0, 0, 0, 0)') surface=surface.parentElement;
+          return {text:getComputedStyle(element,pseudo).color,background:getComputedStyle(surface).backgroundColor};
+        }
+        return [pair(widgets.querySelector('.th')),pair(widgets.querySelector('li')),
+          pair(widgets.querySelector('li[selected]')),pair(document.querySelector('.modal p')),
+          pair(widgets.querySelector('.cbi-progressbar'),'::after'),
+          pair(widgets.querySelector('.cbi-progressbar'),'::after',widgets.querySelector('.cbi-progressbar > div'))];
+      });
+      for(const [index,pair] of palette.entries()) assert(contrast(pair.text,pair.background)>=4.5,`${color} native widget ${index} contrast: ${JSON.stringify(pair)}`);
+      await page.evaluate(()=>{L.ui.hideModal();document.getElementById('theme-widget-fixture').remove();});
+    }
+    console.log('ok - native dropdowns, table titles, dialogs and progress labels stay readable');
+
     for (const color of ['light','dark']) {
       await page.evaluate(color=>{localStorage.setItem('8311-theme',color);},color);
       for (const name of Object.keys(routes)) {

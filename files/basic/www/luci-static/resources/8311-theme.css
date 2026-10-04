@@ -80,6 +80,10 @@
 .luci-8311 input, .luci-8311 select, .luci-8311 textarea, .luci-8311 .cbi-dropdown { color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; box-shadow: none; max-width: 100%; font-family: inherit; }
 .luci-8311 input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), .luci-8311 select { min-height: 36px; padding: 6px 10px; }
 .luci-8311 input[type="checkbox"], .luci-8311 input[type="radio"] { accent-color: var(--accent); }
+.luci-8311 .cbi-dropdown[open] > ul.dropdown { background: var(--surface); border-color: var(--line); box-shadow: none; }
+.luci-8311 .cbi-dropdown:not(.btn):not(.cbi-button) > ul > li, .luci-8311 .cbi-dropdown > ul.dropdown > li { color: var(--text); }
+.luci-8311 .cbi-dropdown[open] > ul.dropdown > li[selected], .luci-8311 .cbi-dropdown[open] > ul.dropdown > li.focus { background: var(--selected); }
+.luci-8311 .cbi-progressbar::after { color: #25324b; text-shadow: none; line-height: 18px; }
 .luci-8311 textarea { padding: 12px; line-height: 1.5; }
 .luci-8311 pre, .luci-8311 code { color: var(--text); background: var(--canvas); border-color: var(--line); border-radius: 6px; }
 .luci-8311 .btn, .luci-8311 .cbi-button { padding: 7px 13px; min-height: 36px; height: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); background-image: none; color: var(--text); text-shadow: none; box-shadow: none; font: inherit; cursor: pointer; }
@@ -95,6 +99,7 @@
 .luci-8311 .table, .luci-8311 table { color: var(--text); background: var(--surface); border-color: var(--line); }
 .luci-8311 .table .tr .td, .luci-8311 .table .tr .th, .luci-8311 table td, .luci-8311 table th { color: var(--text); border-color: var(--line); }
 .luci-8311 .table .tr:nth-child(2n), .luci-8311 .cbi-rowstyle-2 { background: var(--canvas); }
+.luci-8311 .tr.cbi-section-table-titles { background: var(--canvas); }
 .luci-8311 .alert-message { padding: 14px 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); text-shadow: none; }
 .luci-8311 .alert-message.warning { background: var(--warning-bg); color: var(--warning); }
 .luci-8311 .alert-message.error, .luci-8311 .alert-message.danger { background: var(--error-bg); color: var(--danger); }
@@ -105,7 +110,7 @@
 .luci-8311 details > summary { padding: 12px 0; color: var(--accent); cursor: pointer; }
 .luci-8311 #hook-script-box { width: min(760px, calc(100% - 32px)); max-width: none; max-height: calc(100vh - 32px); padding: 20px; overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
 .luci-8311 #hook-script-textarea { max-height: 60vh; font-family: Consolas, monospace; }
-.luci-8311 .modal { background: var(--surface); color: var(--text); border-color: var(--line); border-radius: 10px; }
+.luci-8311 .modal, .luci-8311 #modal_overlay > .modal { background: var(--surface); color: var(--text); border-color: var(--line); border-radius: 10px; }
 .luci-8311 footer { padding: 24px 0 0; margin-top: 32px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; line-height: 1.7; }
 .luci-8311 footer a { color: var(--muted); }
 .luci-8311 footer img { max-width: 100px; height: auto; }
