@@ -1071,3 +1071,9 @@ msgstr "外观"
 #: files/basic/usr/lib/lua/luci/view/themes/bootstrap/header.htm
 msgid "Skip to content"
 msgstr "跳到内容"
+
+msgid "Maintained by"
+msgstr "维护者"
+
+msgid "Credits and licenses"
+msgstr "版权与致谢"

@@ -681,3 +681,9 @@ msgstr "Appearance"
 #: files/basic/usr/lib/lua/luci/view/themes/bootstrap/header.htm
 msgid "Skip to content"
 msgstr "Skip to content"
+
+msgid "Maintained by"
+msgstr "Maintained by"
+
+msgid "Credits and licenses"
+msgstr "Credits and licenses"

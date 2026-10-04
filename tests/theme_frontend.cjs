@@ -44,6 +44,16 @@ function satisfy(node) {
 }
 satisfy(menu);
 
+function footer() {
+  return fs.readFileSync(path.join(root, 'files/basic/usr/lib/lua/luci/view/themes/bootstrap/footer.htm'), 'utf8')
+    .match(/<footer[\s\S]*?<\/footer>/)[0]
+    .replace(/<%:([^%]+)%>/g, '$1')
+    .replace(/<%=\s*ver8311\.variant\s*%>/g, 'basic')
+    .replace(/<%=\s*ver8311\.version\s*%>/g, 'v2.8.3-opt1')
+    .replace(/<%=\s*ver8311\.revision\s*%>/g, '0000000')
+    .replace(/<%=resource%>/g, '/luci-static/resources');
+}
+
 function fixture(name) {
   if (process.env.THEME_FIXTURE_DIR)
     return fs.readFileSync(path.join(process.env.THEME_FIXTURE_DIR, name + '.html'), 'utf8');
@@ -54,9 +64,9 @@ function fixture(name) {
 <script src="/luci-static/resources/8311-theme.js"></script><script src="/luci-static/resources/cbi.js"></script></head>
 <body class="luci-8311 ${anonymous ? 'luci-login' : 'luci-authenticated'}"><header><div class="fill"><div class="container">
 ${anonymous ? '' : '<button id="8311-menu-toggle" type="button" aria-expanded="false" aria-controls="8311-navigation">Menu</button>'}
-<a class="brand" href="/cgi-bin/luci/admin">WAS-110<span>8311 / WAS-110</span></a><div class="theme-controls"><div id="indicators"></div>
+<a class="brand" href="/cgi-bin/luci/admin">WAS-110<span>linlunaire</span></a><div class="theme-controls"><div id="indicators"></div>
 <button id="8311-theme-toggle" type="button" data-system="Follow system" data-light="Light" data-dark="Dark" data-label="Appearance">◐ <span>Follow system</span></button></div>
-${anonymous ? '' : '<nav id="8311-navigation"><ul id="topmenu" class="nav" style="display:none"></ul></nav><button id="8311-menu-backdrop" type="button" hidden>Close</button>'}
+${anonymous ? '' : '<nav id="8311-navigation"><a class="brand sidebar-brand" href="/cgi-bin/luci/admin">WAS-110<span>linlunaire</span></a><ul id="topmenu" class="nav" style="display:none"></ul></nav><button id="8311-menu-backdrop" type="button" hidden>Close</button>'}
 </div></div></header><div id="maincontent" class="container"><div id="tabmenu" style="display:none"></div>
 <script src="/luci-static/resources/luci.js"></script><script>L=new LuCI(${JSON.stringify({
   token: 'fixture-token', media: '/luci-static/bootstrap', resource: '/luci-static/resources', scriptname: '/cgi-bin/luci',
@@ -65,9 +75,9 @@ ${anonymous ? '' : '<nav id="8311-navigation"><ul id="topmenu" class="nav" style
   apply_rollback: 90, apply_holdoff: 4, apply_timeout: 5, apply_display: 1.5
 })});</script>
 <h2>${anonymous ? 'Authorization Required' : name}</h2><form method="post"><div class="cbi-map"><div class="cbi-section">
-<div class="cbi-value"><label class="cbi-value-title" for="fixture-value">${anonymous ? 'Username' : 'PON Serial Number'}</label><div class="cbi-value-field"><input id="fixture-value" name="gpon_sn" value="TEST12345678"></div></div>
+<div class="cbi-value"><label class="cbi-value-title" for="fixture-value">${anonymous ? 'Username' : 'PON Serial Number'}</label><div class="cbi-value-field"><input type="text" id="fixture-value" name="gpon_sn" value="TEST12345678"></div></div>
 <div class="cbi-value-description">Device settings and connection diagnostics.</div></div></div></form>
-<footer><ul id="modemenu" style="display:none"></ul></footer></div>${anonymous ? '' : "<script>L.require('menu-bootstrap')</script>"}</body></html>`;
+${footer()}</div>${anonymous ? '' : "<script>L.require('menu-bootstrap')</script>"}</body></html>`;
 }
 
 const requests = [];
@@ -80,7 +90,7 @@ const server = http.createServer(async (req, res) => {
     const fallback = path.resolve(native, relative);
     const file = override && override.startsWith(resources + path.sep) && fs.existsSync(override) ? override : fallback;
     if (!file.startsWith(resources + path.sep) && !file.startsWith(native + path.sep) || !fs.existsSync(file)) { if(process.env.THEME_DEBUG) console.error('Missing fixture resource:',url.pathname); res.writeHead(404).end(); return; }
-    res.setHeader('Content-Type', file.endsWith('.css') ? 'text/css' : file.endsWith('.png') ? 'image/png' : 'application/javascript');
+    res.setHeader('Content-Type', file.endsWith('.css') ? 'text/css' : file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.png') ? 'image/png' : 'application/javascript');
     res.end(fs.readFileSync(file));
   } else if (url.pathname.endsWith('/admin/menu')) {
     res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(menu));
@@ -187,6 +197,9 @@ function contrast(foreground, background) {
       await page.evaluate(color=>{localStorage.setItem('8311-theme',color);},color);
       for (const name of Object.keys(routes)) {
         await page.goto(base+routes[name]);await page.waitForLoadState('networkidle');
+        assert.match(await page.locator('footer').innerText(), /linlunaire/);
+        assert(!await page.locator('footer a[href*="djGrrr"], footer a[href*="missing233"], footer img').count());
+        assert.equal(await page.locator('footer a[href$="8311-notices.html"]').count(), 1);
         for (const width of [320,390,760,761,1280]) {
           await page.setViewportSize({width,height:900});
           const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1);
@@ -207,6 +220,13 @@ function contrast(foreground, background) {
       }
     }
     console.log('ok - four pages fit 320–1280px and remain readable in both appearances');
+
+    const notices = await page.request.get(base+'/luci-static/resources/8311-notices.html');
+    assert(notices.ok());
+    assert.match(notices.headers()['content-type'], /^text\/html/);
+    const noticeText = await notices.text();
+    for(const name of ['linlunaire','djGrrr','Missing','Apache License','Jerry']) assert(noticeText.includes(name), 'missing credit: '+name);
+    console.log('ok - personal footer links retain upstream credits and the full license');
 
     await page.goto(base+routes.config);await page.waitForLoadState('networkidle');
     await page.setViewportSize({width:390,height:844});

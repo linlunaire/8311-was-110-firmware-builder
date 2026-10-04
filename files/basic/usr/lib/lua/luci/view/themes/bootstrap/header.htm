@@ -3,6 +3,7 @@
  Copyright 2008-2016 Jo-Philipp Wich <jow@openwrt.org>
  Copyright 2012 David Menting <david@nut-bolt.nl>
  Licensed to the public under the Apache License 2.0.
+ Modified by linlunaire: lightweight Argon-style layout and appearance controls.
 -%>
 
 <%
@@ -43,13 +44,16 @@
 					<% if authenticated then %>
 					<button id="8311-menu-toggle" type="button" aria-controls="8311-navigation" aria-expanded="false" aria-label="<%:Toggle navigation%>">☰</button>
 					<% end %>
-					<a class="brand" href="<%=url('admin')%>"><%=striptags(boardinfo.hostname or '?')%><span>8311 / WAS-110</span></a>
+					<a class="brand" href="<%=url('admin')%>"><%=striptags(boardinfo.hostname or '?')%><span>linlunaire</span></a>
 					<div class="theme-controls">
 						<div id="indicators" class="pull-right"></div>
 						<button id="8311-theme-toggle" type="button" data-system="<%:Follow system%>" data-light="<%:Light%>" data-dark="<%:Dark%>" data-label="<%:Appearance%>" aria-label="<%:Appearance%>">◐ <span><%:Follow system%></span></button>
 					</div>
 					<% if authenticated then %>
-					<nav id="8311-navigation" aria-label="<%:Navigation%>"><ul class="nav" id="topmenu" style="display:none"></ul></nav>
+					<nav id="8311-navigation" aria-label="<%:Navigation%>">
+						<a class="brand sidebar-brand" href="<%=url('admin')%>"><%=striptags(boardinfo.hostname or '?')%><span>linlunaire</span></a>
+						<ul class="nav" id="topmenu" style="display:none"></ul>
+					</nav>
 					<button id="8311-menu-backdrop" type="button" aria-label="<%:Close navigation%>" hidden></button>
 					<% end %>
 				</div>
