@@ -134,11 +134,14 @@ function contrast(foreground, background) {
     await page.goto(base+routes.config);await page.waitForLoadState('networkidle');
     await page.locator('#topmenu a[aria-current="page"]').waitFor();
     assert.equal(await page.locator('#topmenu a[aria-current="page"]').getAttribute('href'),routes.config);
+    // Menu rendering can finish before the luci-loaded UCI changes request.
+    await page.waitForFunction(()=>window.L && L.ui && L.ui.changes.changes != null);
+    await page.waitForLoadState('networkidle');
     const before=requests.length;
     const appearance=page.locator('[id="8311-theme-toggle"]');
     await appearance.click();assert.equal(await page.locator('html').getAttribute('data-color'),'light');
     await appearance.click();assert.equal(await page.locator('html').getAttribute('data-color'),'dark');
-    assert.equal(requests.length,before,'appearance change made a network request');
+    assert.equal(requests.length,before,'appearance change made a network request: '+JSON.stringify(requests.slice(before)));
     await page.reload();await page.waitForLoadState('networkidle');
     assert.equal(await page.locator('html').getAttribute('data-theme'),'dark');
     await appearance.click();assert.equal(await page.locator('html').getAttribute('data-theme'),'system');
