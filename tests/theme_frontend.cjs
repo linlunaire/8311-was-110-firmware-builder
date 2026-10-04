@@ -5,17 +5,18 @@ const http = require('node:http');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { chromium, firefox, webkit } = require('playwright');
+const renderNativeStatus = require('./theme_native_fixtures.cjs');
 
 const root = path.resolve(__dirname, '..');
 const resources = path.join(root, 'files/basic/www/luci-static/resources');
 const native = path.join(root, '.test-tmp/theme-browser-native-' + (process.env.BROWSER_ENGINE || 'chromium'));
 // Read the already bundled packages; do not download or install dependencies on a device.
 execFileSync(process.platform === 'win32' ? 'python' : 'python3', ['-c', `
-import io,tarfile
+import io,re,tarfile
 from pathlib import Path
 root=Path(${JSON.stringify(root)})
 destination=Path(${JSON.stringify(native)}).resolve()
-for package in ('luci-base_git-22.045.73925-36e5c1c-1_mips_24kc.ipk','luci-theme-bootstrap_git-22.045.73925-36e5c1c-1_all.ipk'):
+for package in ('luci-base_git-22.045.73925-36e5c1c-1_mips_24kc.ipk','luci-theme-bootstrap_git-22.045.73925-36e5c1c-1_all.ipk','luci-mod-status_git-22.045.73925-36e5c1c-1_mips_24kc.ipk'):
  with tarfile.open(root/'packages/basic'/package) as outer:
   with tarfile.open(fileobj=io.BytesIO(outer.extractfile(next(n for n in outer.getnames() if 'data.tar' in n)).read())) as archive:
    for member in archive.getmembers():
@@ -24,13 +25,18 @@ for package in ('luci-base_git-22.045.73925-36e5c1c-1_mips_24kc.ipk','luci-theme
      assert target.is_relative_to(destination)
      target.parent.mkdir(parents=True,exist_ok=True)
      target.write_bytes(archive.extractfile(member).read())
+    if member.isfile() and member.name.endswith('/view/admin_status/index.htm'):
+     source=archive.extractfile(member).read().decode()
+     helper=re.search(r'<script type="text/javascript">([\\s\\S]*?)</script>',source).group(1)
+     (destination/'resources/theme-status-helper.js').write_text(helper,encoding='utf-8')
 `]);
 const routes = {
   config: '/cgi-bin/luci/admin/8311/config', pon: '/cgi-bin/luci/admin/8311/pon_status',
-  firmware: '/cgi-bin/luci/admin/system/flash', login: '/login'
+  firmware: '/cgi-bin/luci/admin/system/flash', login: '/login',
+  overview: '/cgi-bin/luci/admin/status/overview', routes: '/cgi-bin/luci/admin/status/routes'
 };
 const menu = { children: { admin: { title: 'Administration', order: 1, children: {
-  status: { title: 'Status', order: 1, children: { overview: { title: 'Overview', order: 1 } } },
+  status: { title: 'Status', order: 1, children: { overview: { title: 'Overview', order: 1 }, routes: { title: 'Routes', order: 2 } } },
   system: { title: 'System', order: 2, children: { flash: { title: 'Backup / Flash Firmware', order: 1 } } },
   '8311': { title: '8311', order: 3, children: {
     config: { title: 'Configuration', order: 1 }, pon_status: { title: 'PON Status', order: 2 },
@@ -54,18 +60,32 @@ function footer() {
     .replace(/<%=resource%>/g, '/luci-static/resources');
 }
 
+function appearance() {
+  return fs.readFileSync(path.join(root, 'files/basic/usr/lib/lua/luci/view/themes/bootstrap/header.htm'), 'utf8')
+    .match(/<div id="8311-theme-toggle"[\s\S]*?<\/div>/)[0].replace(/<%:([^%]+)%>/g, '$1');
+}
+
+function backup() {
+  return '<link rel="stylesheet" href="/luci-static/resources/view/8311.css">' +
+    fs.readFileSync(path.join(root, 'files/basic/usr/lib/lua/luci/view/8311/firmware.htm'), 'utf8')
+      .split('<div id="8311-recovery-page">')[1].split('<div class="cbi-section">\n\t<h3><%:Flash new firmware image%>')[0]
+      .replace(/<%:([^%]+)%>/g, '$1').replace(/<%=esc\(translate\('([^']+)'\)\)%>/g, '$1')
+      .replace(/<%=url\([^%]+%>/g, routes.firmware+'/recovery').replace(/<%=token%>/g, 'fixture-token')
+      .replace(/^/, '<div id="8311-recovery-page">') + '</div>';
+}
+
 function fixture(name) {
-  if (process.env.THEME_FIXTURE_DIR)
+  if (process.env.THEME_FIXTURE_DIR && !['overview','routes'].includes(name))
     return fs.readFileSync(path.join(process.env.THEME_FIXTURE_DIR, name + '.html'), 'utf8');
   const anonymous = name === 'login';
   const dispatchpath = (anonymous ? routes.config : routes[name]).replace('/cgi-bin/luci/', '').split('/');
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="/luci-static/bootstrap/cascade.css"><link rel="stylesheet" href="/luci-static/resources/8311-theme.css">
 <script src="/luci-static/resources/8311-theme.js"></script><script src="/luci-static/resources/cbi.js"></script></head>
-<body class="luci-8311 ${anonymous ? 'luci-login' : 'luci-authenticated'}"><header><div class="fill"><div class="container">
+<body class="luci-8311 ${anonymous ? 'luci-login' : 'luci-authenticated'}" data-page="${dispatchpath.join('-')}"><header><div class="fill"><div class="container">
 ${anonymous ? '' : '<button id="8311-menu-toggle" type="button" aria-expanded="false" aria-controls="8311-navigation">Menu</button>'}
 <a class="brand" href="/cgi-bin/luci/admin">WAS-110<span>linlunaire</span></a><div class="theme-controls"><div id="indicators"></div>
-<button id="8311-theme-toggle" type="button" data-system="Follow system" data-light="Light" data-dark="Dark" data-label="Appearance">◐ <span>Follow system</span></button></div>
+${appearance()}</div>
 ${anonymous ? '' : '<nav id="8311-navigation"><a class="brand sidebar-brand" href="/cgi-bin/luci/admin">WAS-110<span>linlunaire</span></a><ul id="topmenu" class="nav" style="display:none"></ul></nav><button id="8311-menu-backdrop" type="button" hidden>Close</button>'}
 </div></div></header><div id="maincontent" class="container"><div id="tabmenu" style="display:none"></div>
 <script src="/luci-static/resources/luci.js"></script><script>L=new LuCI(${JSON.stringify({
@@ -74,9 +94,10 @@ ${anonymous ? '' : '<nav id="8311-navigation"><a class="brand sidebar-brand" hre
   pollinterval: 5, ubuspath: '/ubus/', sessionid: anonymous ? null : '00000000000000000000000000000000',
   apply_rollback: 90, apply_holdoff: 4, apply_timeout: 5, apply_display: 1.5
 })});</script>
-<h2>${anonymous ? 'Authorization Required' : name}</h2><form method="post"><div class="cbi-map"><div class="cbi-section">
+${name==='routes' ? '' : '<h2>'+(anonymous ? 'Authorization Required' : name)+'</h2>'}
+${['overview','routes'].includes(name) ? '<div id="theme-native-view"></div><script src="/luci-static/resources/theme-status-helper.js"></script><script>('+renderNativeStatus.toString()+')('+JSON.stringify(name)+')</script>' : name==='firmware' ? backup() : `<form method="post"><div class="cbi-map"><div class="cbi-section">
 <div class="cbi-value"><label class="cbi-value-title" for="fixture-value">${anonymous ? 'Username' : 'PON Serial Number'}</label><div class="cbi-value-field"><input type="text" id="fixture-value" name="gpon_sn" value="TEST12345678"></div></div>
-<div class="cbi-value-description">Device settings and connection diagnostics.</div></div></div></form>
+<div class="cbi-value-description">Device settings and connection diagnostics.</div></div></div></form>`}
 ${footer()}</div>${anonymous ? '' : "<script>L.require('menu-bootstrap')</script>"}</body></html>`;
 }
 
@@ -149,12 +170,17 @@ function contrast(foreground, background) {
     await page.waitForLoadState('networkidle');
     const before=requests.length;
     const appearance=page.locator('[id="8311-theme-toggle"]');
-    await appearance.click();assert.equal(await page.locator('html').getAttribute('data-color'),'light');
-    await appearance.click();assert.equal(await page.locator('html').getAttribute('data-color'),'dark');
+    assert.equal(await appearance.getAttribute('role'),'group');
+    assert.equal(await appearance.locator('button').count(),3);
+    await appearance.locator('[data-theme-mode="light"]').click();assert.equal(await page.locator('html').getAttribute('data-color'),'light');
+    await appearance.locator('[data-theme-mode="dark"]').click();assert.equal(await page.locator('html').getAttribute('data-color'),'dark');
+    assert.equal(await appearance.locator('[aria-pressed="true"]').getAttribute('data-theme-mode'),'dark');
     assert.equal(requests.length,before,'appearance change made a network request: '+JSON.stringify(requests.slice(before)));
     await page.reload();await page.waitForLoadState('networkidle');
     assert.equal(await page.locator('html').getAttribute('data-theme'),'dark');
-    await appearance.click();assert.equal(await page.locator('html').getAttribute('data-theme'),'system');
+    await appearance.locator('[data-theme-mode="system"]').focus();await page.keyboard.press('Enter');
+    assert.equal(await page.locator('html').getAttribute('data-theme'),'system');
+    assert.equal(await appearance.locator('[aria-pressed="true"]').getAttribute('data-theme-mode'),'system');
     await page.emulateMedia({colorScheme:'dark'});
     await page.waitForFunction(()=>document.documentElement.dataset.color==='dark');
     await page.emulateMedia({colorScheme:'light'});
@@ -185,18 +211,56 @@ function contrast(foreground, background) {
         }
         return [pair(widgets.querySelector('.th')),pair(widgets.querySelector('li')),
           pair(widgets.querySelector('li[selected]')),pair(document.querySelector('.modal p')),
-          pair(widgets.querySelector('.cbi-progressbar'),'::after'),
-          pair(widgets.querySelector('.cbi-progressbar'),'::after',widgets.querySelector('.cbi-progressbar > div'))];
+          pair(widgets.querySelector('.cbi-progressbar'),'::after')];
       });
       for(const [index,pair] of palette.entries()) assert(contrast(pair.text,pair.background)>=4.5,`${color} native widget ${index} contrast: ${JSON.stringify(pair)}`);
       await page.evaluate(()=>{L.ui.hideModal();document.getElementById('theme-widget-fixture').remove();});
     }
     console.log('ok - native dropdowns, table titles, dialogs and progress labels stay readable');
 
+    for(const color of ['light','dark']) {
+      await page.evaluate(color=>localStorage.setItem('8311-theme',color),color);
+      await page.goto(base+routes.overview);await page.waitForLoadState('networkidle');
+      await page.locator('#theme-native-view[data-ready="true"]').waitFor();
+      const overviewColors=await page.evaluate(()=>{
+        function pair(element,pseudo) {
+          let surface=element;
+          while(surface.parentElement && getComputedStyle(surface).backgroundColor==='rgba(0, 0, 0, 0)') surface=surface.parentElement;
+          return {text:getComputedStyle(element,pseudo).color,background:getComputedStyle(surface).backgroundColor};
+        }
+        const bar=document.querySelector('#stock-memory .cbi-progressbar');
+        return {pairs:[pair(document.querySelector('.ifacebox-head strong')),pair(document.querySelector('.ifacebox-body > span')),
+          pair(document.querySelector('.ifacebox-body .ifacebadge')),pair(bar,'::after')],
+          gap:bar.getBoundingClientRect().height-parseFloat(getComputedStyle(bar,'::after').height)-bar.firstElementChild.getBoundingClientRect().height};
+      });
+      for(const pair of overviewColors.pairs) assert(contrast(pair.text,pair.background)>=4.5,`${color} stock overview contrast: ${JSON.stringify(pair)}`);
+      assert(overviewColors.gap>=2,'native progress labels overlap the fill');
+      await page.goto(base+routes.routes);await page.waitForLoadState('networkidle');
+      await page.locator('#theme-native-view[data-ready="true"]').waitFor();
+      const routeColors=await page.locator('.table-titles .th, .td > .ifacebadge').evaluateAll(elements=>elements.map(element=>{
+        let surface=element;
+        while(surface.parentElement && getComputedStyle(surface).backgroundColor==='rgba(0, 0, 0, 0)') surface=surface.parentElement;
+        return {text:getComputedStyle(element).color,background:getComputedStyle(surface).backgroundColor};
+      }));
+      for(const pair of routeColors) assert(contrast(pair.text,pair.background)>=4.5,`${color} stock route contrast: ${JSON.stringify(pair)}`);
+      await page.goto(base+routes.firmware);await page.waitForLoadState('networkidle');
+      const controls=await page.locator('#reset-preserve').evaluate(select=>{
+        const button=select.nextElementSibling,a=select.getBoundingClientRect(),b=button.getBoundingClientRect();
+        return {topDifference:Math.abs(a.top-b.top),heightDifference:Math.abs(a.height-b.height),
+          action:getComputedStyle(document.querySelector('.recovery-button')).backgroundColor,
+          reset:getComputedStyle(button).backgroundColor,card:getComputedStyle(select.closest('.cbi-section')).backgroundColor};
+      });
+      assert(controls.topDifference<=1 && controls.heightDifference<=1,`${color} backup controls misalign: ${JSON.stringify(controls)}`);
+      assert.notEqual(controls.action,controls.card,'backup action lost its primary color');
+      assert.notEqual(controls.action,controls.reset,'reset and backup actions have identical colors');
+    }
+    console.log('ok - stock overview and route widgets stay readable; backup actions align and keep semantic colors');
+
     for (const color of ['light','dark']) {
       await page.evaluate(color=>{localStorage.setItem('8311-theme',color);},color);
       for (const name of Object.keys(routes)) {
         await page.goto(base+routes[name]);await page.waitForLoadState('networkidle');
+        if(['overview','routes'].includes(name)) await page.locator('#theme-native-view[data-ready="true"]').waitFor();
         assert.match(await page.locator('footer').innerText(), /linlunaire/);
         assert(!await page.locator('footer a[href*="djGrrr"], footer a[href*="missing233"], footer img').count());
         assert.equal(await page.locator('footer a[href$="8311-notices.html"]').count(), 1);
@@ -204,8 +268,14 @@ function contrast(foreground, background) {
           await page.setViewportSize({width,height:900});
           const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1);
           assert(!overflow,`${name} overflows at ${width}px in ${color}`);
+          if(name==='routes' && width<=760) {
+            const table=await page.locator('.table').nth(1).evaluate(element=>({
+              viewport:element.clientWidth,content:element.scrollWidth,
+              wrap:getComputedStyle(element.querySelector('.th')).whiteSpace}));
+            assert((table.viewport>=640 || table.content>table.viewport) && table.wrap==='nowrap','narrow routes must scroll locally without splitting column labels: '+JSON.stringify(table));
+          }
         }
-        const colors=await page.locator('.cbi-value-title, .diagnostic-summary strong').first().evaluate(label=>{
+        const colors=await page.locator('.cbi-value-title, .diagnostic-summary strong, .table .th, .table .td').first().evaluate(label=>{
           let background=label;
           while(background.parentElement && getComputedStyle(background).backgroundColor==='rgba(0, 0, 0, 0)') background=background.parentElement;
           return {text:getComputedStyle(label).color,background:getComputedStyle(background).backgroundColor,
@@ -219,7 +289,7 @@ function contrast(foreground, background) {
         }
       }
     }
-    console.log('ok - four pages fit 320–1280px and remain readable in both appearances');
+    console.log('ok - six pages fit 320–1280px and remain readable in both appearances');
 
     const notices = await page.request.get(base+'/luci-static/resources/8311-notices.html');
     assert(notices.ok());
@@ -261,7 +331,7 @@ function contrast(foreground, background) {
     await restricted.addInitScript(()=>{Object.defineProperty(window,'localStorage',{get(){throw new Error('Storage blocked')}})});
     const blocked=await restricted.newPage();blocked.on('pageerror',error=>errors.push(error.message));
     await blocked.goto(base+routes.login);await blocked.waitForLoadState('networkidle');
-    await blocked.locator('[id="8311-theme-toggle"]').click();
+    await blocked.locator('[id="8311-theme-toggle"] [data-theme-mode="light"]').click();
     assert.equal(await blocked.locator('html').getAttribute('data-theme'),'light');
     await restricted.close();
     console.log('ok - appearance controls work when browser storage is blocked');

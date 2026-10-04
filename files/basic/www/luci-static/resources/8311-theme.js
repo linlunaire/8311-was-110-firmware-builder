@@ -19,17 +19,19 @@
 
 	document.addEventListener('DOMContentLoaded', function () {
 		var theme = document.getElementById('8311-theme-toggle');
-		function labelAppearance() {
-			var label = theme.getAttribute('data-' + mode);
-			theme.querySelector('span').textContent = label;
-			theme.setAttribute('aria-label', theme.getAttribute('data-label') + ': ' + label);
+		function markAppearance() {
+			Array.prototype.forEach.call(theme.querySelectorAll('button[data-theme-mode]'), function (button) {
+				button.setAttribute('aria-pressed', String(button.getAttribute('data-theme-mode') === mode));
+			});
 		}
 		if (theme) {
-			labelAppearance();
-			theme.addEventListener('click', function () {
-				mode = modes[(modes.indexOf(mode) + 1) % modes.length];
+			markAppearance();
+			theme.addEventListener('click', function (event) {
+				var button = event.target.closest('button[data-theme-mode]');
+				if (!button || !theme.contains(button)) return;
+				mode = button.getAttribute('data-theme-mode');
 				applyAppearance();
-				labelAppearance();
+				markAppearance();
 				try { localStorage.setItem('8311-theme', mode); } catch (e) {}
 			});
 		}

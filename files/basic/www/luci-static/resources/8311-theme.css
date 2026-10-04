@@ -1,3 +1,10 @@
+/* Components adapted from luci-theme-argon cascade.less and dark.less.
+ * Copyright 2025 Jerrykuku <jerrykuku@qq.com>
+ * Copyright 2015 Lutty Yang <lutty@wcan.in> (luci-theme-material)
+ * Licensed to the public under the Apache License 2.0.
+ * Source: https://github.com/jerrykuku/luci-theme-argon/tree/23c3e525578374d6b20f5e7b93d27874cd01a252
+ * Modified by linlunaire: Lua LuCI selectors, contrast and separate progress labels.
+ */
 :root {
 	color-scheme: light;
 	--surface: #fff;
@@ -15,6 +22,13 @@
 	--error-bg: #fff0f2;
 	--warning: #72500b;
 	--warning-bg: #fff6df;
+	--table-head: #f6f9fc;
+	--destructive: #f5365c;
+	--destructive-text: #23131b;
+	--progress: #5e72e4;
+	--progress-track: #e9ecef;
+	--badge: #f0f0f0;
+	--badge-text: #32325d;
 }
 :root[data-color="dark"] {
 	color-scheme: dark;
@@ -24,15 +38,22 @@
 	--primary: #483d8b;
 	--login-panel: rgba(30,30,30,.9);
 	--canvas: #1e1e1e;
-	--text: #e3e3e3;
+	--text: #ccc;
 	--muted: #bdbdc6;
-	--line: #484848;
+	--line: #3c3c3c;
 	--accent: #b3a8f3;
 	--selected: #3c345e;
 	--danger: #ffadb9;
 	--error-bg: #492936;
 	--warning: #f3d287;
 	--warning-bg: #403626;
+	--table-head: #252526;
+	--destructive: #ff8c00;
+	--destructive-text: #251b0d;
+	--progress: #483d8b;
+	--progress-track: #282a2c;
+	--badge: #483d8b;
+	--badge-text: #fff;
 }
 .luci-8311 {
 	margin: 0 !important;
@@ -61,8 +82,12 @@
 .luci-8311 header .sidebar-brand span { color: var(--muted); }
 .luci-authenticated header .container > .brand span { display: none; }
 .luci-8311 .theme-controls { display: flex; align-items: center; gap: 12px; margin-left: auto; }
-.luci-8311 [id="8311-theme-toggle"] { white-space: nowrap; }
-.luci-8311 [id="8311-theme-toggle"], .luci-8311 [id="8311-menu-toggle"] { padding: 7px 10px; border: 1px solid rgba(255,255,255,.35); border-radius: 4px; background: var(--primary); color: #fff; font: inherit; cursor: pointer; }
+.luci-8311 .theme-switch { display: inline-flex; flex-shrink: 0; gap: 2px; padding: 3px; border: 1px solid rgba(255,255,255,.28); border-radius: 24px; background: rgba(255,255,255,.12); }
+.luci-8311 .theme-switch button { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: none; color: #fff; font: inherit; cursor: pointer; }
+.luci-8311 .theme-switch button:hover { background: rgba(255,255,255,.16); }
+.luci-8311 .theme-switch button[aria-pressed="true"] { background: #fff; color: #32325d; }
+.luci-8311 .theme-switch svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.luci-8311 [id="8311-menu-toggle"] { padding: 7px 10px; border: 1px solid rgba(255,255,255,.35); border-radius: 4px; background: var(--primary); color: #fff; font: inherit; cursor: pointer; }
 .luci-8311 [id="8311-menu-toggle"] { display: none; }
 .luci-8311 [id="8311-navigation"] { position: fixed; top: 0; left: 0; bottom: 0; width: 224px; padding: 0 12px 24px; overflow-y: auto; background: var(--sidebar); box-shadow: 0 0 20px rgba(0,0,0,.04); }
 .luci-8311 #topmenu, .luci-8311 #topmenu ul { float: none; margin: 0; padding: 0; width: 100%; list-style: none; }
@@ -97,19 +122,29 @@
 .luci-8311 .cbi-value-description, .luci-8311 .cbi-map-descr, .luci-8311 .cbi-section-descr { color: var(--muted); line-height: 1.6; }
 .luci-8311 .cbi-value-description { background-image: none; padding-left: 0; }
 .luci-8311 .cbi-value-description, .luci-8311 .cbi-value-field { overflow-wrap: anywhere; }
+.luci-8311 .cbi-value-title { padding-top: 8px; }
+.luci-8311 [id="8311-recovery-page"] .cbi-value-field { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
+.luci-8311 [id="8311-recovery-page"] .cbi-value-field > .cbi-value-description { flex-basis: 100%; }
+.luci-8311 [id="8311-recovery-page"] .cbi-value-field > input[type="file"], .luci-8311 [id="8311-recovery-page"] .cbi-button { margin: 0; }
 .luci-8311 input, .luci-8311 select, .luci-8311 textarea, .luci-8311 .cbi-dropdown { color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; box-shadow: none; max-width: 100%; font-family: inherit; }
 .luci-8311 input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), .luci-8311 select { min-height: 36px; padding: 6px 10px; }
 .luci-8311 input[type="checkbox"], .luci-8311 input[type="radio"] { accent-color: var(--accent); }
 .luci-8311 .cbi-dropdown[open] > ul.dropdown { background: var(--surface); border-color: var(--line); box-shadow: none; }
 .luci-8311 .cbi-dropdown:not(.btn):not(.cbi-button) > ul > li, .luci-8311 .cbi-dropdown > ul.dropdown > li { color: var(--text); }
 .luci-8311 .cbi-dropdown[open] > ul.dropdown > li[selected], .luci-8311 .cbi-dropdown[open] > ul.dropdown > li.focus { background: var(--selected); }
-.luci-8311 .cbi-progressbar::after { color: #25324b; text-shadow: none; line-height: 18px; }
+.luci-8311 input[type="file"]::file-selector-button { margin: -6px 10px -6px -10px; padding: 8px 12px; border: 0; border-right: 1px solid var(--line); background: var(--selected); color: var(--accent); font: inherit; cursor: pointer; }
+.luci-8311 .cbi-progressbar { position: relative; display: flex; width: 100%; height: 38px; min-width: 0; margin: 0; border: 0; border-radius: 0; background: none; font-size: .75rem; }
+.luci-8311 .cbi-progressbar::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1rem; border-radius: .5rem; background: var(--progress-track); }
+.luci-8311 .cbi-progressbar > div { display: block; position: absolute; bottom: 0; height: 1rem; border-radius: .5rem; background: var(--progress); transition: width .3s; }
+.luci-8311 .cbi-progressbar::after { top: 0; bottom: auto; height: 20px; color: var(--text); text-shadow: none; line-height: 20px; font-size: .75rem; text-align: left; }
 .luci-8311 textarea { padding: 12px; line-height: 1.5; }
 .luci-8311 pre, .luci-8311 code { color: var(--text); background: var(--canvas); border-color: var(--line); border-radius: 6px; }
-.luci-8311 .btn, .luci-8311 .cbi-button { padding: 7px 13px; min-height: 36px; height: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); background-image: none; color: var(--text); text-shadow: none; box-shadow: none; font: inherit; cursor: pointer; }
+.luci-8311 .btn, .luci-8311 .cbi-button { display: inline-block; width: auto; padding: 7px 12px; min-height: 36px; height: auto; border: 1px solid var(--line); border-radius: .25rem; background: var(--surface); background-image: none; color: var(--text); text-shadow: none; box-shadow: none; font: inherit; line-height: 20px; text-align: center; vertical-align: middle; white-space: nowrap; user-select: none; appearance: none; touch-action: manipulation; cursor: pointer; }
 .luci-8311 .btn:hover, .luci-8311 .cbi-button:hover { background: var(--selected); color: var(--text); }
-.luci-8311 .cbi-button-apply, .luci-8311 .cbi-button-save, .luci-8311 .cbi-button-positive { background: var(--primary); border-color: var(--primary); color: #fff; }
-.luci-8311 .cbi-button-apply:hover, .luci-8311 .cbi-button-save:hover, .luci-8311 .cbi-button-positive:hover { background: #4355bd; color: #fff; }
+.luci-8311 .cbi-button-apply, .luci-8311 .cbi-button-save, .luci-8311 .cbi-button-positive, .luci-8311 .cbi-button-action, .luci-8311 .cbi-button-edit { background: var(--primary); border-color: var(--primary); color: #fff; }
+.luci-8311 .cbi-button-apply:hover, .luci-8311 .cbi-button-save:hover, .luci-8311 .cbi-button-positive:hover, .luci-8311 .cbi-button-action:hover, .luci-8311 .cbi-button-edit:hover { background: var(--primary); color: #fff; filter: brightness(.92); }
+.luci-8311 .cbi-button-negative, .luci-8311 .cbi-button-remove { background: var(--destructive); border-color: var(--destructive); color: var(--destructive-text); }
+.luci-8311 .cbi-button-negative:hover, .luci-8311 .cbi-button-remove:hover { background: var(--destructive); color: var(--destructive-text); filter: brightness(.92); }
 .luci-8311 button:disabled, .luci-8311 input:disabled, .luci-8311 select:disabled { cursor: default; opacity: .55; }
 .luci-8311 .cbi-page-actions { margin: 20px 0; padding: 16px 0; border-top: 1px solid var(--line); background: none; }
 .luci-8311 .cbi-tabmenu, .luci-8311 .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 16px 0; padding: 0; border-bottom: 1px solid var(--line); background: none; }
@@ -117,9 +152,24 @@
 .luci-8311 .cbi-tabmenu a, .luci-8311 .tabs a { display: block; padding: 9px 12px; color: var(--muted); border: 0; border-bottom: 2px solid transparent; border-radius: 0; }
 .luci-8311 .cbi-tab a, .luci-8311 .tabs .active a { color: var(--accent); border-bottom-color: var(--accent); background: none; }
 .luci-8311 .table, .luci-8311 table { color: var(--text); background: var(--surface); border-color: var(--line); }
-.luci-8311 .table .tr .td, .luci-8311 .table .tr .th, .luci-8311 table td, .luci-8311 table th { color: var(--text); border-color: var(--line); }
+.luci-8311 .table { table-layout: fixed; width: 100%; }
+.luci-8311 .table .tr .td, .luci-8311 .table .tr .th, .luci-8311 table td, .luci-8311 table th { color: var(--text); border-color: var(--line); overflow-wrap: anywhere; }
 .luci-8311 .table .tr:nth-child(2n), .luci-8311 .cbi-rowstyle-2 { background: var(--canvas); }
-.luci-8311 .tr.cbi-section-table-titles { background: var(--canvas); }
+.luci-8311 .tr.table-titles, .luci-8311 .tr.cbi-section-table-titles, .luci-8311 table thead { background: var(--table-head); }
+.luci-8311 .tr.table-titles .th, .luci-8311 .tr.cbi-section-table-titles .th { padding: 1.1em 1.25rem; line-height: 1.3rem; color: var(--muted); border-top: 0; border-bottom: 1px solid var(--line); }
+.luci-8311 .ifacebox, .luci-8311 .ifacebadge { background: var(--surface); background-image: none; color: var(--text); border-color: var(--line); text-shadow: none; box-shadow: none; white-space: normal; }
+.luci-8311 .ifacebox .ifacebox-head { padding: 10px 14px; border-color: var(--line); background: var(--table-head); color: var(--text); }
+.luci-8311 .ifacebox .ifacebox-head.active { background: var(--primary); color: #fff; }
+.luci-8311 .ifacebox { line-height: 1.25; display: inline-flex; overflow: hidden; flex-direction: column; border-radius: 4px; }
+.luci-8311 .ifacebox .ifacebox-body { padding: .875rem 1rem; line-height: 1.6em; }
+.luci-8311 .ifacebadge { display: inline-flex; align-items: center; gap: .2rem; padding: .25rem .8rem; border-radius: 4px; font-size: .875rem; }
+.luci-8311 .td > .ifacebadge { color: var(--badge-text); background: var(--badge); border: 0; }
+.luci-8311 .network-status-table { gap: 12px; margin-bottom: 16px; }
+.luci-8311 .network-status-table .ifacebox { flex: 1 1 280px; min-width: 0; margin: 0; }
+.luci-8311 .network-status-table .ifacebox-body { display: flex; flex-direction: column; height: 100%; gap: .5em; }
+.luci-8311 .network-status-table .ifacebox-body > span { margin: 0 0 12px; line-height: 1.6; }
+.luci-8311 .network-status-table .ifacebox-body > div { display: flex; flex-wrap: wrap; gap: .5rem; margin: 0; }
+.luci-8311 .network-status-table .ifacebox-body .ifacebadge { min-width: 0; margin: 0; padding: 10px; background: var(--table-head); border: 0; }
 .luci-8311 .alert-message { padding: 14px 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); text-shadow: none; }
 .luci-8311 .alert-message.warning { background: var(--warning-bg); color: var(--warning); }
 .luci-8311 .alert-message.error, .luci-8311 .alert-message.danger { background: var(--error-bg); color: var(--danger); }
@@ -142,6 +192,9 @@
 .luci-login header .brand { color: var(--text); font-size: 25px; }
 .luci-login header .brand span { color: var(--muted); }
 .luci-login .theme-controls { margin-left: 0; }
+.luci-login .theme-switch { background: var(--canvas); border-color: var(--line); }
+.luci-login .theme-switch button { color: var(--muted); }
+.luci-login .theme-switch button[aria-pressed="true"] { background: var(--surface); color: var(--accent); box-shadow: 0 1px 5px rgba(0,0,0,.15); }
 .luci-login #maincontent { display: flex; flex-direction: column; width: min(416px,90%); min-height: 100vh; margin: 0 0 0 5%; padding: 190px 36px 24px; background: var(--login-panel); backdrop-filter: blur(12px); box-shadow: 0 0 40px rgba(0,0,0,.2); }
 .luci-login #maincontent > form { margin-top: auto; margin-bottom: auto; }
 .luci-login .cbi-map { padding: 0; background: none; border: 0; border-radius: 0; }
@@ -177,7 +230,13 @@
 	.luci-8311 #maincontent { margin-left: 0; padding: 20px 16px; }
 	.luci-8311 .cbi-section { padding: 16px; }
 	.luci-8311 h2 { font-size: 17px; }
+	.luci-8311[data-page="admin-status-routes"] .table { display: block; overflow-x: auto; }
+	.luci-8311[data-page="admin-status-routes"] .table > .tr { display: table; table-layout: fixed; min-width: 640px; width: 100%; }
+	.luci-8311[data-page="admin-status-routes"] .table .th, .luci-8311[data-page="admin-status-routes"] .table .td { overflow-wrap: normal; white-space: nowrap; }
 	.luci-login header { left: 0; width: 100%; }
 	.luci-login header .fill { padding: 24px 28px 0; }
 	.luci-login #maincontent { width: 100%; min-height: 100vh; margin: 0; padding: 180px 28px 24px; }
+}
+@media (prefers-reduced-motion: reduce) {
+	.luci-8311 .cbi-progressbar > div { transition: none; }
 }

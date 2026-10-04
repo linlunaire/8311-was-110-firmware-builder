@@ -47,7 +47,11 @@
 					<a class="brand" href="<%=url('admin')%>"><%=striptags(boardinfo.hostname or '?')%><span>linlunaire</span></a>
 					<div class="theme-controls">
 						<div id="indicators" class="pull-right"></div>
-						<button id="8311-theme-toggle" type="button" data-system="<%:Follow system%>" data-light="<%:Light%>" data-dark="<%:Dark%>" data-label="<%:Appearance%>" aria-label="<%:Appearance%>">◐ <span><%:Follow system%></span></button>
+						<div id="8311-theme-toggle" class="theme-switch" role="group" aria-label="<%:Appearance%>">
+							<button type="button" data-theme-mode="light" aria-label="<%:Light%>" title="<%:Light%>" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M5 5l1.4 1.4m11.2 11.2L19 19M2 12h2m16 0h2M5 19l1.4-1.4M17.6 6.4 19 5"/></svg></button>
+							<button type="button" data-theme-mode="dark" aria-label="<%:Dark%>" title="<%:Dark%>" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+							<button type="button" data-theme-mode="system" aria-label="<%:Follow system%>" title="<%:Follow system%>" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8m-4-4v4"/></svg></button>
+						</div>
 					</div>
 					<% if authenticated then %>
 					<nav id="8311-navigation" aria-label="<%:Navigation%>">
