@@ -736,11 +736,35 @@ class TempSpaceTests(ShellFixture):
         (self.root / "lib").mkdir()
         shutil.copyfile(library, self.root / "lib/8311-limits.sh")
         (self.root / "proc").mkdir()
-        self.command("df", "printf 'Filesystem Blocks Used Available Capacity Mounted\\nfixture 0 0 %s 0%% /tmp\\n' \"${DISK_KB:-0}\"")
+        self.command("df", "printf 'Filesystem Blocks Used Available Capacity Mounted\\nfixture %s %s %s 0%% /tmp\\n' \"${TOTAL_KB:-0}\" \"${USED_KB:-0}\" \"${DISK_KB:-0}\"")
+
+    def check_space_report(self, total, used, available, succeeds):
+        (self.root / "proc/meminfo").write_text("MemAvailable: 262144 kB\n")
+        self.env.update(TOTAL_KB=str(total), USED_KB=str(used), DISK_KB=str(available))
+        result = self.run_script(self.space, "16777216")
+        self.assertEqual(result.returncode == 0, succeeds, result.stdout + result.stderr)
+
+    def test_zero_total_capacity_uses_memory_budget(self):
+        self.check_space_report(0, 0, 0, True)
+
+    def test_full_finite_filesystem_is_rejected(self):
+        self.check_space_report(32768, 32768, 0, False)
+
+    def test_insufficient_finite_filesystem_is_rejected(self):
+        self.check_space_report(32768, 31744, 1024, False)
+
+    def test_sufficient_finite_filesystem_is_accepted(self):
+        self.check_space_report(65536, 32768, 32768, True)
+
+    def test_inconsistent_or_malformed_capacity_reports_fail_closed(self):
+        for total, available in ((0, 1), (1024, 2048), ("bad", 0), (32768, ""), (32768, "bad")):
+            with self.subTest(total=total, available=available):
+                self.check_space_report(total, 0, available, False)
 
     def test_memory_budget_handles_zero_block_tmp_and_finite_filesystem(self):
         (self.root / "proc/meminfo").write_text("MemAvailable: 65536 kB\n")
         self.assertEqual(self.run_script(self.space, "1048576").returncode, 0)
+        self.env["TOTAL_KB"] = "131072"
         self.env["DISK_KB"] = "8192"
         self.assertNotEqual(self.run_script(self.space, "1048576").returncode, 0)
         self.env["DISK_KB"] = "100000"

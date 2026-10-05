@@ -34,7 +34,7 @@ require_tmp_space() {
 	case "${1-}" in ''|*[!0-9]*) return 2 ;; esac
 	case "$1" in 0?*) return 2 ;; esac
 	[ "$#" -eq 1 ] && [ "${#1}" -le 9 ] || return 2
-	local MEM DISK
+	local MEM DISK TOTAL
 	MEM=$(awk '
 		/^MemAvailable:/ { available=$2; found=1 }
 		/^MemFree:/ { free=$2 }
@@ -44,9 +44,13 @@ require_tmp_space() {
 		END { print int(found ? available : free+buffers+cached-shared) }
 	' /proc/meminfo) || return 1
 	DISK=$(df -Pk /tmp/ 2>/dev/null) || return 1
-	DISK=$(printf '%s\n' "$DISK" | awk 'NR==2 {print $4}')
-	case "$MEM:$DISK" in *[!0-9:]*|:*|*:) return 1 ;; esac
-	[ "$DISK" -eq 0 ] || [ "$MEM" -le "$DISK" ] || MEM=$DISK
+	DISK=$(printf '%s\n' "$DISK" | awk 'NR==2 {print $2 ":" $4}') || return 1
+	case "$MEM:$DISK" in *[!0-9:]*|:*|*:|*::*|*:*:*:*) return 1 ;; esac
+	TOTAL=${DISK%:*}
+	DISK=${DISK#*:}
+	[ "$DISK" -le "$TOTAL" ] || return 1
+	# Only zero total capacity means unavailable accounting; zero free can mean full.
+	[ "$TOTAL" -eq 0 ] || [ "$MEM" -le "$DISK" ] || MEM=$DISK
 	# Leave 8 MiB for management/driver processes. Writes still check ENOSPC.
 	[ "$MEM" -ge "$(( ($1 + 1023) / 1024 + 8192 ))" ] || {
 		echo 'Insufficient temporary space or available memory.' >&2
