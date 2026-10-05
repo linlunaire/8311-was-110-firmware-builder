@@ -120,7 +120,8 @@ class ShellFixture(unittest.TestCase):
 kind,*args=sys.argv[1:]
 if kind == 'crc32':
     data=pathlib.Path(args[0]).read_bytes() if args else sys.stdin.buffer.read()
-    print('%08x' % zlib.crc32(data))
+    # Match BusyBox: named inputs include the filename, stdin includes only CRC.
+    print('%08x%s' % (zlib.crc32(data), ' '+args[0] if args else ''))
 else:
     start=int(args[args.index('-s')+1]); length=int(args[args.index('-n')+1])
     print(pathlib.Path(args[-1]).read_bytes()[start:start+length].hex(),end='')

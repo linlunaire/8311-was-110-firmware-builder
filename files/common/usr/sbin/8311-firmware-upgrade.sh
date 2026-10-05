@@ -199,7 +199,7 @@ validate_image() {
 		head -c 64 "$HEADER" > "$WORKDIR/header.crc" || _err "Unable to check uImage header."
 		printf '\000\000\000\000' | dd of="$WORKDIR/header.crc" bs=1 seek=4 conv=notrunc 2>/dev/null || _err "Unable to check uImage header."
 		local header_crc
-		header_crc=$(crc32 "$WORKDIR/header.crc") || _err "Unable to check uImage header CRC."
+		header_crc=$(crc32 < "$WORKDIR/header.crc") || _err "Unable to check uImage header CRC."
 		[ "$header_crc" = "$(hex 4 4)" ] || _err "Invalid uImage header CRC."
 		local data_crc
 		data_crc=$(stream_digest crc32 tail -c +65 "$IMAGE") || _err "Unable to check uImage payload."
