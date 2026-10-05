@@ -120,7 +120,7 @@ local function setup()
 			end
 			return s.call_code or 0
 		end,
-		process = { exec = function(command, output)
+		process = { exec = function(command, output, stderr)
 			if command[1] == "/usr/sbin/8311-temp-space.sh" then
 				s.space_checks = (s.space_checks or 0) + 1
 				return { code = s.space_code or 0 }
@@ -139,6 +139,7 @@ local function setup()
 				table.remove(s.processes)
 				s.environment_reads = (s.environment_reads or 0) + 1
 				if output then output(s.environment or "") end
+				if stderr then stderr(s.env_stderr or "") end
 				return { code = s.env_read_code or 0 }
 			end
 			if output then output(s.process_output or "") end
@@ -446,7 +447,7 @@ check("environment writes report failure and verify readback", function()
 end)
 
 check("clearing an environment field requires a successful complete readback", function()
-	for _, code in ipairs({ 7, 124, 137 }) do
+	for _, code in ipairs({ 7, 124, 137, 143 }) do
 		for _, output in ipairs({ "", "8311_fix_vlans=\n" }) do
 			local s, tools = setup()
 			s.env_read_code, s.environment = code, output
@@ -481,6 +482,15 @@ check("environment read states and verification stages preserve exact stored val
 	s.call_code = 7
 	ok, stage = tools.fwenv_set("text", "", true, true)
 	assert(not ok and stage == "write")
+end)
+
+check("environment diagnostics and excessive stderr cannot become an empty success", function()
+	local s, tools = setup()
+	s.environment="8311_hostname=\n"
+	s.env_stderr="reader diagnostic\n"
+	assert(tools.read_fwenvs()==nil and not tools.fwenv_set("hostname", "", true))
+	s.env_stderr=string.rep("x", 131073)
+	assert(tools.read_command({"/usr/sbin/fw_printenv"})==nil)
 end)
 
 check("VLAN status reports only bounded states, pending reloads and a live monitor", function()

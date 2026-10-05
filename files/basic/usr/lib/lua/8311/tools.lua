@@ -67,22 +67,23 @@ function fwenv_get(key, default, _8311, base64)
 	return base64 and base64_codec.dec(value) or value
 end
 
-function read_command(command, limit)
+function read_command(command, limit, strict_stderr)
 	limit = limit or 131072
-	local chunks, size = {}, 0
+	local chunks, size, stderr_size = {}, 0, 0
 	local result = sys.process.exec(command, function(chunk)
 		size = size + #chunk
 		if size <= limit then table.insert(chunks, chunk) end
-	end)
+	end, function(chunk) stderr_size = stderr_size + #chunk end)
 	if not result or result.code ~= 0 then
 		return nil, result and (result.code == 124 or result.code == 137 or result.code == 143) and "timeout" or "read"
 	end
-	if size > limit then return nil, "limit" end
+	if size + stderr_size > limit then return nil, "limit" end
+	if strict_stderr and stderr_size > 0 then return nil, "read" end
 	return table.concat(chunks)
 end
 
 function read_fwenvs()
-	local raw, reason = read_command({ "/usr/bin/timeout", "-k", "1", "5", "/usr/sbin/fw_printenv" })
+	local raw, reason = read_command({ "/usr/bin/timeout", "-k", "1", "5", "/usr/sbin/fw_printenv" }, nil, true)
 	if not raw then return nil, reason end
 	local values = {}
 	for line in raw:gmatch("[^\n]+") do
