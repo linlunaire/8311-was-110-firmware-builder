@@ -445,6 +445,18 @@ $(document).ready(function () {
 	var hookScriptMessage = $('#hook-script-message');
 	var hookScriptTextarea = $('#hook-script-textarea');
 	var vlanFields = $('.vlan-field');
+	function closeHookEditor() {
+		hookScriptModal.hide();
+		editHookScriptBtn.focus();
+	}
+	hookScriptModal.on('keydown', function (event) {
+		if (event.key === 'Escape') { event.preventDefault(); closeHookEditor(); return; }
+		if (event.key !== 'Tab') return;
+		var first = hookScriptTextarea[0];
+		var last = $('#hook-script-save-btn').prop('disabled') ? $('#hook-script-cancel-btn')[0] : $('#hook-script-save-btn')[0];
+		if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+		else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+	});
 
 	function toggleVlanFields() {
 		var fixVlansValue = fixVlansSelect.val();
@@ -471,10 +483,14 @@ $(document).ready(function () {
 			hookScriptTextarea.val(data);
 			$('#hook-script-save-btn').prop('disabled', false);
 			hookScriptModal.show();
-			adjustTextareaHeight();
+			hookScriptTextarea[0].setSelectionRange(0, 0);
+			hookScriptTextarea.focus();
+			hookScriptTextarea[0].scrollTop = 0;
+			hookScriptTextarea[0].scrollLeft = 0;
 		}).fail(function () {
-			hookScriptMessage.text(translations.hookScriptLoadFailed).css('color', 'red').show();
+			hookScriptMessage.text(translations.hookScriptLoadFailed).css('color', 'var(--danger)').show();
 			hookScriptModal.show();
+			$('#hook-script-cancel-btn').focus();
 		}).always(function () {
 			editHookScriptBtn.prop('disabled', false);
 		});
@@ -489,31 +505,23 @@ $(document).ready(function () {
 			data: { content: content, token: $('#8311-config input[name="token"]').val() }
 		}).done(function (response) {
 			if (!response.success) {
-				hookScriptMessage.text(translations.hookScriptSaveFailed).css('color', 'red').show();
+				hookScriptMessage.text(translations.hookScriptSaveFailed).css('color', 'var(--danger)').show();
 				return;
 			}
 			hookScriptMessage.text(translations.hookScriptSaved);
-			hookScriptMessage.css('color', 'green');
+			hookScriptMessage.css('color', 'var(--accent)');
 			hookScriptMessage.show();
 			setTimeout(function () {
 				hookScriptMessage.hide();
-				hookScriptModal.hide();
+				closeHookEditor();
 			}, 1000); // hide window in 1s
 		}).fail(function (_, status) {
 			hookScriptMessage.text(status === 'timeout' ? configForm.dataset.timeout : translations.hookScriptSaveFailed);
-			hookScriptMessage.css('color', 'red');
+			hookScriptMessage.css('color', 'var(--danger)');
 			hookScriptMessage.show();
 		}).always(function () {
 			saveButton.prop('disabled', false).removeClass('spinning');
 		});
 	});
-	$('#hook-script-cancel-btn').click(function () {
-		hookScriptModal.hide();
-	});
-	function adjustTextareaHeight() {
-		hookScriptTextarea.height(0);
-		var height = hookScriptTextarea[0].scrollHeight;
-		hookScriptTextarea.height(height);
-	}
-	hookScriptTextarea.on('input', adjustTextareaHeight);
+	$('#hook-script-cancel-btn').click(closeHookEditor);
 });

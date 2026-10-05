@@ -137,12 +137,16 @@ for _, option in pairs(item.options) do
 
 <div id="hook-script-modal" style="display:none;">
 	<div id="hook-script-overlay"></div>
-	<div id="hook-script-box">
+	<div id="hook-script-box" role="dialog" aria-modal="true" aria-labelledby="hook-script-title">
+		<div class="hook-script-heading">
+			<div><h3 id="hook-script-title"><%:Edit hook script%></h3><code title="/ptconf/8311/vlan_fixes_hook.sh">vlan_fixes_hook.sh</code></div>
+			<span class="hook-script-language">Shell</span>
+		</div>
 		<div id="hook-script-message" class="cbi-value-description" style="display:none;"></div>
-		<textarea id="hook-script-textarea" style="resize: none;" placeholder="<%= esc(hook_script_placeholder) %>"></textarea>
+		<textarea id="hook-script-textarea" aria-labelledby="hook-script-title" wrap="off" spellcheck="false" style="resize: none;" placeholder="<%= esc(hook_script_placeholder) %>"></textarea>
 		<div id="hook-script-buttons">
-			<button id="hook-script-save-btn" class="cbi-button cbi-button-save"><%:Save and apply hook%></button>
 			<button id="hook-script-cancel-btn" class="cbi-button cbi-button-reset"><%:Cancel%></button>
+			<button id="hook-script-save-btn" class="cbi-button cbi-button-save"><%:Save and apply hook%></button>
 		</div>
 	</div>
 </div>

@@ -87,6 +87,29 @@ function backup() {
       .replace(/^/, '<div id="8311-recovery-page">') + '</div>';
 }
 
+function hookEditor() {
+  const template=fs.readFileSync(path.join(root,'files/basic/usr/lib/lua/luci/view/8311/config.htm'),'utf8');
+  return template.match(/<div id="hook-script-modal"[\s\S]*?(?=<%\+footer%>)/)[0]
+    .replace(/<%:([^%]+)%>/g,'$1').replace(/<%= esc\(hook_script_placeholder\) %>/g,'# fixture hook');
+}
+
+function configuration() {
+  const template=fs.readFileSync(path.join(root,'files/basic/usr/lib/lua/luci/view/8311/config.htm'),'utf8');
+  const edit=template.match(/<button id="edit-hook-script-btn"[\s\S]*?<\/button>/)[0].replace(/<%:([^%]+)%>/g,'$1');
+  return `<link rel="stylesheet" href="/luci-static/resources/view/8311.css">
+<script src="/luci-static/resources/jquery-3.7.1.min.js"></script>
+<script>var translations={hookScriptSaved:'Saved',hookScriptSaveFailed:'Save failed',hookScriptLoadFailed:'Load failed'};</script>
+<script src="/luci-static/resources/view/8311.js"></script>
+<form id="8311-config" method="post" data-unsaved="Unsaved changes" data-timeout="Request timed out">
+<input type="hidden" name="token" value="fixture-token"><p id="config-save-message" style="display:none"></p>
+<div class="cbi-map"><div class="cbi-section"><div class="cbi-value">
+<label class="cbi-value-title" for="fixture-value">PON Serial Number</label><div class="cbi-value-field">
+<input type="text" id="fixture-value" name="gpon_sn" value="TEST12345678"></div></div>
+<div class="cbi-value"><label class="cbi-value-title" for="widget.cbid.system.poncfg.fix_vlans">VLAN Hook</label>
+<div class="cbi-value-field"><select id="widget.cbid.system.poncfg.fix_vlans" name="fix_vlans"><option value="1">Hook script only</option></select> ${edit}</div></div>
+<div class="cbi-value-description">Device settings and connection diagnostics.</div></div></div></form>${hookEditor()}`;
+}
+
 function fixture(name) {
   if (process.env.THEME_FIXTURE_DIR && !['overview','routes'].includes(name))
     return fs.readFileSync(path.join(process.env.THEME_FIXTURE_DIR, name + '.html'), 'utf8');
@@ -100,7 +123,7 @@ ${appearanceInit()}
 ${anonymous ? '' : '<button id="8311-menu-toggle" type="button" aria-expanded="false" aria-controls="8311-navigation">Menu</button>'}
 <a class="brand" href="/cgi-bin/luci/admin">${anonymous ? 'WAS-110-login-fixture-with-long-hostname' : 'WAS-110'}<span>linlunaire</span></a><div class="theme-controls"><div id="indicators"></div>
 ${appearance()}</div>
-${anonymous ? '' : '<nav id="8311-navigation"><a class="brand sidebar-brand" href="/cgi-bin/luci/admin">WAS-110<span>linlunaire</span></a><ul id="topmenu" class="nav" style="display:none"></ul></nav><button id="8311-menu-backdrop" type="button" hidden>Close</button>'}
+${anonymous ? '' : '<nav id="8311-navigation"><a class="brand sidebar-brand" href="/cgi-bin/luci/admin">8311<span>linlunaire</span></a><ul id="topmenu" class="nav" style="display:none"></ul></nav><button id="8311-menu-backdrop" type="button" hidden>Close</button>'}
 </div></div></header><div id="maincontent" class="container"><div id="tabmenu" style="display:none"></div>
 <script src="/luci-static/resources/luci.js"></script><script>L=new LuCI(${JSON.stringify({
   token: 'fixture-token', media: '/luci-static/bootstrap', resource: '/luci-static/resources', scriptname: '/cgi-bin/luci',
@@ -109,7 +132,7 @@ ${anonymous ? '' : '<nav id="8311-navigation"><a class="brand sidebar-brand" hre
   apply_rollback: 90, apply_holdoff: 4, apply_timeout: 5, apply_display: 1.5
 })});</script>
 ${anonymous || name==='routes' ? '' : '<h2>'+name+'</h2>'}
-${anonymous ? login() : ['overview','routes'].includes(name) ? '<div id="theme-native-view"></div><script src="/luci-static/resources/theme-status-helper.js"></script><script>('+renderNativeStatus.toString()+')('+JSON.stringify(name)+')</script>' : name==='firmware' ? backup() : `<form method="post"><div class="cbi-map"><div class="cbi-section">
+${anonymous ? login() : ['overview','routes'].includes(name) ? '<div id="theme-native-view"></div><script src="/luci-static/resources/theme-status-helper.js"></script><script>('+renderNativeStatus.toString()+')('+JSON.stringify(name)+')</script>' : name==='firmware' ? backup() : name==='config' ? configuration() : `<form method="post"><div class="cbi-map"><div class="cbi-section">
 <div class="cbi-value"><label class="cbi-value-title" for="fixture-value">${anonymous ? 'Username' : 'PON Serial Number'}</label><div class="cbi-value-field"><input type="text" id="fixture-value" name="gpon_sn" value="TEST12345678"></div></div>
 <div class="cbi-value-description">Device settings and connection diagnostics.</div></div></div></form>`}
 ${footer()}</div>${anonymous ? '' : "<script>L.require('menu-bootstrap')</script>"}</body></html>`;
@@ -142,7 +165,7 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(Array.isArray(data) ? data.map(respond) : respond(data)));
   } else if (url.pathname.includes('/admin/translations/')) {
     res.setHeader('Content-Type', 'application/javascript'); res.end('');
-  } else if (url.pathname.endsWith('/get_hook_script')) { res.end('# fixture hook\n');
+  } else if (url.pathname.endsWith('/get_hook_script')) { res.end('#!/bin/sh\n# fixture hook\n\tprintf "%s\\n" "'+('readable shell code '.repeat(12))+'"\n'+('echo "fixture line"\n'.repeat(80)));
   } else if (url.pathname.endsWith('/vlan_status')) {
     res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({state:'applied',message:'Fixture rules applied'}));
   } else if (url.pathname.endsWith('/diagnostics')) {
@@ -172,7 +195,7 @@ function contrast(foreground, background) {
 (async () => {
   let browser;
   try {
-    await new Promise(resolve => server.listen(process.env.THEME_PREVIEW ? 56410 : 0, '127.0.0.1', resolve));
+    await new Promise(resolve => server.listen(process.env.THEME_PREVIEW ? Number(process.env.THEME_PREVIEW_PORT || 56410) : 0, '127.0.0.1', resolve));
     const base='http://127.0.0.1:'+server.address().port;
     if (process.env.THEME_PREVIEW) { console.log('Preview: '+base+routes.config); return; }
     const engine = { chromium, firefox, webkit }[process.env.BROWSER_ENGINE || 'chromium'];
@@ -184,6 +207,8 @@ function contrast(foreground, background) {
     await page.goto(base+routes.config);await page.waitForLoadState('networkidle');
     await page.locator('#topmenu a[aria-current="page"]').waitFor();
     assert.equal(await page.locator('#topmenu a[aria-current="page"]').getAttribute('href'),routes.config);
+    assert.equal(await page.locator('.sidebar-brand').evaluate(brand=>brand.firstChild.textContent.trim()),'8311');
+    assert.equal(await page.locator('.sidebar-brand span').innerText(),'linlunaire');
     // Menu rendering can finish before the luci-loaded UCI changes request.
     await page.waitForFunction(()=>window.L && L.ui && L.ui.changes.changes != null);
     await page.waitForLoadState('networkidle');
@@ -367,18 +392,106 @@ function contrast(foreground, background) {
     assert.equal(await page.locator('#maincontent').evaluate(content=>content.inert),false);
     console.log('ok - mobile navigation closes with Escape, backdrop and desktop resize');
 
+    await page.evaluate(()=>{
+      const section=E('section',{id:'theme-tab-layout-fixture',class:'cbi-section',style:'width:610px;max-width:100%'},[
+        E('ul',{class:'tabs'},['负载','流量','连接'].map((label,index)=>E('li',{class:index===1?'active':''},E('a',{href:'#'},label)))),
+        E('div',{},['eth0_0','eth0_0_1.lct','eth0_0_2','tcont-omci'].map((label,index)=>E('div',{
+          'data-tab':label,'data-tab-title':label,'data-tab-active':index===0?'true':'false'
+        },E('p','Fixture graph'))))
+      ]);
+      document.getElementById('maincontent').append(section);L.ui.tabs.initTabGroup(section.lastElementChild.children);
+    });
+    assert.equal(await page.locator('#theme-tab-layout-fixture li[data-tab]').count(),4);
+    for(const color of ['light','dark']) {
+      await page.locator('[data-theme-mode="'+color+'"]').click();
+      for(const width of [320,390,760,1280]) {
+        await page.setViewportSize({width,height:900});
+        const cells=await page.locator('#theme-tab-layout-fixture li > a').evaluateAll(links=>links.map(link=>{
+          const cell=link.parentElement.getBoundingClientRect(),box=link.getBoundingClientRect();
+          const range=document.createRange();range.selectNodeContents(link);const text=range.getBoundingClientRect();
+          return {cellTop:cell.top,cellBottom:cell.bottom,top:box.top,bottom:box.bottom,textBottom:text.bottom,
+            cellLeft:cell.left,cellRight:cell.right,left:box.left,right:box.right};
+        }));
+        for(const cell of cells) {
+          assert(cell.top>=cell.cellTop-.5 && cell.bottom<=cell.cellBottom+.5,'tab link and underline overflow their row: '+JSON.stringify(cell));
+          assert(cell.bottom>=cell.textBottom+4,'tab underline touches its label');
+          assert(cell.left>=cell.cellLeft-.5 && cell.right<=cell.cellRight+.5,'tab link overflows its cell');
+        }
+        const underlines=await page.locator('#theme-tab-layout-fixture .cbi-tab > a, #theme-tab-layout-fixture .active > a').evaluateAll(links=>links.map(link=>{
+          const style=getComputedStyle(link);return {color:style.color,line:style.borderBottomColor,width:parseFloat(style.borderBottomWidth)};
+        }));
+        assert(underlines.every(line=>line.width===2 && line.line===line.color),'active tab underline is missing');
+      }
+    }
+    await page.locator('#theme-tab-layout-fixture li[data-tab="tcont-omci"] a').click();
+    assert.equal(await page.locator('#theme-tab-layout-fixture div[data-tab="tcont-omci"]').getAttribute('data-tab-active'),'true');
+    assert.equal(await page.locator('#theme-tab-layout-fixture .cbi-tab').count(),1);
+    await page.locator('#theme-tab-layout-fixture').evaluate(section=>section.remove());
+    console.log('ok - native wrapped tabs keep underlines below labels and switch panes');
+
+    await page.setViewportSize({width:1280,height:900});
+    await page.evaluate(()=>{window.themePollFixture=()=>Promise.resolve();L.Poll.add(window.themePollFixture,5);L.Poll.start();});
+    const refresh=page.locator('[data-indicator="poll-status"]');
+    await refresh.waitFor();
+    for(const color of ['light','dark']) {
+      await page.locator('[data-theme-mode="'+color+'"]').click();
+      const geometry=await refresh.evaluate(indicator=>{
+        const box=indicator.getBoundingClientRect(),peer=document.getElementById('8311-theme-toggle').getBoundingClientRect();
+        const style=getComputedStyle(indicator);
+        return {height:box.height,peerHeight:peer.height,center:box.top+box.height/2,peerCenter:peer.top+peer.height/2,
+          radius:parseFloat(style.borderRadius),font:parseFloat(style.fontSize),foreground:style.color,
+          background:style.backgroundColor,behind:getComputedStyle(indicator.closest('.fill')).backgroundColor};
+      });
+      assert(Math.abs(geometry.height-geometry.peerHeight)<=1 && Math.abs(geometry.center-geometry.peerCenter)<=1,'refresh and appearance controls do not align: '+JSON.stringify(geometry));
+      assert(geometry.radius>=geometry.height/2 && geometry.font>=12,'refresh is still a tiny status label');
+      const front=geometry.background.match(/[\d.]+/g).map(Number),behind=geometry.behind.match(/[\d.]+/g).map(Number),alpha=front[3]??1;
+      const background='rgb('+front.slice(0,3).map((channel,index)=>channel*alpha+behind[index]*(1-alpha)).join(',')+')';
+      assert(contrast(geometry.foreground,background)>=4.5,'refresh text has low contrast');
+    }
+    await refresh.click();assert.equal(await refresh.getAttribute('data-style'),'inactive');
+    assert.equal(await page.evaluate(()=>L.Poll.active()),false);
+    await refresh.click();assert.equal(await refresh.getAttribute('data-style'),'active');
+    assert.equal(await page.evaluate(()=>L.Poll.active()),true);
+    await page.evaluate(()=>{L.Poll.remove(window.themePollFixture);delete window.themePollFixture;});
+    console.log('ok - native refresh control matches appearance controls and still pauses and resumes');
+
     if(process.env.THEME_FIXTURE_DIR) {
-      await page.setViewportSize({width:390,height:844});
       const category=await page.locator('[name="fix_vlans"]').getAttribute('data-cat-id');
       await page.locator('li[data-tab="'+category+'"] a').click();
+    }
+    const hookWritesBefore=requests.filter(request=>request.path.endsWith('/save_hook_script')).length;
+    for(const color of ['light','dark']) {
+      await page.locator('[data-theme-mode="'+color+'"]').click();
       await page.locator('#edit-hook-script-btn').click();
       await page.waitForFunction(()=>document.getElementById('hook-script-textarea').value.includes('# fixture hook'));
-      const box=await page.locator('#hook-script-box').boundingBox();
-      assert(box.x>=0 && box.y>=0 && box.x+box.width<=390 && box.y+box.height<=844,'hook editor is outside the viewport');
+      assert.equal(await page.locator('#hook-script-box').getAttribute('role'),'dialog');
+      assert(await page.locator('#hook-script-textarea').evaluate(field=>field===document.activeElement),'editor did not receive focus');
+      assert(await page.locator('#hook-script-textarea').evaluate(field=>field.scrollTop===0 && field.scrollLeft===0 && field.selectionStart===0),'editor did not open at the start of the file');
+      for(const width of [320,390,760,1280]) {
+        await page.setViewportSize({width,height:844});
+        const box=await page.locator('#hook-script-box').boundingBox();
+        assert(box.x>=0 && box.y>=0 && box.x+box.width<=width && box.y+box.height<=844,'hook editor is outside the viewport');
+        const code=await page.locator('#hook-script-textarea').evaluate(field=>({
+          size:parseFloat(getComputedStyle(field).fontSize),line:parseFloat(getComputedStyle(field).lineHeight),
+          wrap:field.wrap,scrolls:field.scrollHeight>field.clientHeight
+        }));
+        assert(code.size>=13 && code.line>=20 && code.wrap==='off' && code.scrolls,'editor code is too small or wraps shell lines: '+JSON.stringify(code));
+        assert(await page.locator('#hook-script-save-btn').isVisible() && await page.locator('#hook-script-cancel-btn').isVisible());
+      }
+      await page.locator('#hook-script-save-btn').focus();await page.keyboard.press('Tab');
+      assert(await page.locator('#hook-script-textarea').evaluate(field=>field===document.activeElement),'dialog focus escaped');
+      await page.locator('#hook-script-textarea').evaluate(field=>{field.scrollTop=field.scrollHeight;field.scrollLeft=field.scrollWidth;});
+      await page.keyboard.press('Escape');
+      assert(!await page.locator('#hook-script-modal').isVisible());
+      assert(await page.locator('#edit-hook-script-btn').evaluate(button=>button===document.activeElement),'editor did not restore focus');
+      await page.locator('#edit-hook-script-btn').click();
+      await page.waitForFunction(()=>document.getElementById('hook-script-textarea').value.includes('# fixture hook'));
+      assert(await page.locator('#hook-script-textarea').evaluate(field=>field.scrollTop===0 && field.scrollLeft===0 && field.selectionStart===0),'reopening retained the previous editor scroll position');
       await page.locator('#hook-script-cancel-btn').click();
       assert(!await page.locator('#hook-script-modal').isVisible());
-      console.log('ok - native hook editor fits mobile and still opens and cancels');
     }
+    assert.equal(requests.filter(request=>request.path.endsWith('/save_hook_script')).length,hookWritesBefore,'opening or cancelling the editor wrote a hook');
+    console.log('ok - native hook editor has readable code, fits mobile and keeps keyboard focus without writes');
 
     const restricted=await browser.newContext();
     await restricted.addInitScript(()=>{Object.defineProperty(window,'localStorage',{get(){throw new Error('Storage blocked')}})});

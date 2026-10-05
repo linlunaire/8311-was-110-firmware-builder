@@ -3,7 +3,7 @@
  * Copyright 2015 Lutty Yang <lutty@wcan.in> (luci-theme-material)
  * Licensed to the public under the Apache License 2.0.
  * Source: https://github.com/jerrykuku/luci-theme-argon/tree/23c3e525578374d6b20f5e7b93d27874cd01a252
- * Modified by linlunaire: Lua LuCI selectors, contrast and separate progress labels.
+ * Modified by linlunaire: Lua LuCI selectors, contrast, editor and control geometry.
  */
 :root {
 	color-scheme: light;
@@ -82,7 +82,12 @@
 .luci-8311 header .sidebar-brand span { color: var(--muted); }
 .luci-authenticated header .container > .brand span { display: none; }
 .luci-8311 .theme-controls { display: flex; align-items: center; gap: 12px; margin-left: auto; }
-.luci-8311 .theme-switch { display: inline-flex; flex-shrink: 0; gap: 2px; padding: 3px; border: 1px solid rgba(255,255,255,.28); border-radius: 24px; background: rgba(255,255,255,.12); }
+.luci-8311 #indicators { display: flex; align-items: center; gap: 8px; float: none; padding: 0; }
+.luci-8311 header [data-indicator="poll-status"] { display: inline-flex; align-items: center; gap: 6px; min-height: 38px; margin: 0; padding: 6px 12px; border: 1px solid rgba(255,255,255,.28); border-radius: 24px; background: rgba(0,0,0,.12); font: inherit; font-size: 13px; font-weight: 500; line-height: 20px; text-transform: none; }
+.luci-8311 header [data-indicator="poll-status"]::before { content: ""; flex-shrink: 0; width: 16px; height: 16px; background: currentColor; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M20 7v5h-5M20 12a8 8 0 1 0-2.3 5.7'/%3E%3C/svg%3E") center / contain no-repeat; }
+.luci-8311 header [data-indicator="poll-status"][data-style="inactive"]::before { mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' d='M9 5v14M15 5v14'/%3E%3C/svg%3E"); }
+.luci-8311 header [data-indicator="poll-status"][data-clickable]:hover { background: rgba(0,0,0,.2); }
+.luci-8311 .theme-switch { display: inline-flex; flex-shrink: 0; gap: 2px; padding: 3px; border: 1px solid rgba(255,255,255,.28); border-radius: 24px; background: rgba(0,0,0,.12); }
 .luci-8311 .theme-switch button { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: none; color: #fff; font: inherit; cursor: pointer; }
 .luci-8311 .theme-switch button:hover { background: rgba(255,255,255,.16); }
 .luci-8311 .theme-switch button[aria-pressed="true"] { background: #fff; color: #32325d; }
@@ -148,9 +153,9 @@
 .luci-8311 button:disabled, .luci-8311 input:disabled, .luci-8311 select:disabled { cursor: default; opacity: .55; }
 .luci-8311 .cbi-page-actions { margin: 20px 0; padding: 16px 0; border-top: 1px solid var(--line); background: none; }
 .luci-8311 .cbi-tabmenu, .luci-8311 .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 16px 0; padding: 0; border-bottom: 1px solid var(--line); background: none; }
-.luci-8311 .cbi-tabmenu li, .luci-8311 .tabs li { margin: 0; border: 0; background: none; }
-.luci-8311 .cbi-tabmenu a, .luci-8311 .tabs a { display: block; padding: 9px 12px; color: var(--muted); border: 0; border-bottom: 2px solid transparent; border-radius: 0; }
-.luci-8311 .cbi-tab a, .luci-8311 .tabs .active a { color: var(--accent); border-bottom-color: var(--accent); background: none; }
+.luci-8311 .cbi-tabmenu > li, .luci-8311 .tabs > li { flex: 0 1 auto; height: auto; min-width: 0; max-width: 100%; margin: 0; border: 0; background: none; }
+.luci-8311 .cbi-tabmenu > li > a, .luci-8311 .tabs > li > a { display: block; padding: 9px 12px; color: var(--muted); border: 0; border-bottom: 2px solid transparent; border-radius: 0; line-height: 1.4; text-decoration: none; }
+.luci-8311 .cbi-tabmenu > .cbi-tab > a, .luci-8311 .tabs > .active > a { color: var(--accent); border-bottom-color: var(--accent); background: none; }
 .luci-8311 .table, .luci-8311 table { color: var(--text); background: var(--surface); border-color: var(--line); }
 .luci-8311 .table { table-layout: fixed; width: 100%; }
 .luci-8311 .table .tr .td, .luci-8311 .table .tr .th, .luci-8311 table td, .luci-8311 table th { color: var(--text); border-color: var(--line); overflow-wrap: anywhere; }
@@ -178,8 +183,16 @@
 .luci-8311 .diagnostic-summary strong { color: var(--muted); font-size: 12px; font-weight: 400; }
 .luci-8311 .diagnostic-summary span { margin-top: 5px; font-size: 16px; font-weight: 600; }
 .luci-8311 details > summary { padding: 12px 0; color: var(--accent); cursor: pointer; }
-.luci-8311 #hook-script-box { width: min(760px, calc(100% - 32px)); max-width: none; max-height: calc(100vh - 32px); padding: 20px; overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
-.luci-8311 #hook-script-textarea { max-height: 60vh; font-family: Consolas, monospace; }
+.luci-8311 #hook-script-box { display: flex; flex-direction: column; width: min(960px, calc(100% - 32px)); height: min(720px, calc(100vh - 32px)); max-width: none; max-height: calc(100vh - 32px); padding: 0; overflow: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 24px 80px rgba(0,0,0,.24); }
+.luci-8311 .hook-script-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 20px 24px 16px; }
+.luci-8311 .hook-script-heading > div { min-width: 0; }
+.luci-8311 .hook-script-heading h3 { margin: 0 0 4px; font-size: 18px; font-weight: 600; }
+.luci-8311 .hook-script-heading code { display: block; overflow: hidden; padding: 0; background: none; border: 0; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.luci-8311 .hook-script-language { padding: 4px 10px; border: 1px solid var(--line); border-radius: 20px; background: var(--canvas); color: var(--muted); font-size: 12px; }
+.luci-8311 #hook-script-message { flex-shrink: 0; margin: 0 24px 12px; }
+.luci-8311 #hook-script-textarea { display: block; flex: 1; width: auto; height: auto; min-width: 0; min-height: 0; max-height: none; margin: 0 24px; padding: 16px; overflow: auto; background: var(--canvas); border-radius: 8px; font-family: Consolas, "SFMono-Regular", monospace; font-size: 13px; line-height: 22px; tab-size: 4; white-space: pre; overflow-wrap: normal; }
+.luci-8311 #hook-script-buttons { display: flex; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin: 16px 0 0; padding: 16px 24px; border-top: 1px solid var(--line); }
+.luci-8311 #hook-script-save-btn, .luci-8311 #hook-script-cancel-btn { margin: 0; }
 .luci-8311 .modal, .luci-8311 #modal_overlay > .modal { background: var(--surface); color: var(--text); border-color: var(--line); border-radius: 10px; }
 .luci-8311 footer { padding: 24px 0 0; margin-top: 32px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; line-height: 1.7; }
 .luci-8311 footer a { color: var(--muted); }
@@ -222,7 +235,11 @@
 	.luci-8311 header .container { gap: 8px; }
 	.luci-8311 header .brand { font-size: 15px; }
 	.luci-8311 .theme-controls { gap: 6px; }
-	.luci-8311 #indicators { position: fixed; right: 16px; bottom: 16px; padding: 6px; border-radius: 6px; background: var(--surface); }
+	.luci-8311 #indicators { position: fixed; right: 16px; bottom: 16px; padding: 3px; border-radius: 24px; background: var(--header); }
+	.luci-8311 .hook-script-heading { padding: 16px; }
+	.luci-8311 #hook-script-message { margin: 0 16px 12px; }
+	.luci-8311 #hook-script-textarea { margin: 0 16px; }
+	.luci-8311 #hook-script-buttons { padding: 12px 16px; }
 	.luci-8311 [id="8311-menu-toggle"] { display: block; }
 	.luci-8311.navigation-open [id="8311-menu-toggle"] { position: relative; z-index: 803; }
 	.luci-8311 [id="8311-navigation"] { display: none; z-index: 802; width: min(280px, calc(100% - 48px)); padding-top: 64px; }
