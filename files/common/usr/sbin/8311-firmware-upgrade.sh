@@ -152,50 +152,14 @@ fwenv_set() {
 	[ "$(fw_printenv -n "$1" 2>/dev/null)" = "$2" ]
 }
 
-ubi_default_order() {
-	case "$1" in
-		kernelA) echo "0"; ;;
-		bootcoreA) echo "1"; ;;
-		rootfsA) echo "2"; ;;
-		kernelB) echo "3"; ;;
-		bootcoreB) echo "4"; ;;
-		rootfsB) echo "5"; ;;
-		*) return 1; ;;
-	esac
-}
-
-ubi_dev() {
-	local NAME="$1"
-	[ -n "$NAME" ] || _err "Must specify name for UBI volume name."
-	VOL=$(ubinfo /dev/ubi0 -N "$NAME" 2>/dev/null | grep "Volume ID:" | awk '{print $3}')
-	[ "$VOL" -ge 0 ] 2>/dev/null || return 1
-	echo "/dev/ubi0_$VOL"
-}
-
-ubi_size() {
-	local NAME="$1"
-	[ -n "$NAME" ] || _err "Must specify name for UBI volume name."
-	SIZE=$(ubinfo /dev/ubi0 -N "$NAME" 2>/dev/null | grep "Size:" | tr '(),' '   ' | awk '{print $4}')
-	[ -n "$SIZE" ] || return 1
-	echo "$SIZE"
-}
-
-ubi_create() {
-	local NAME="$1"
-	local SIZE="$2"
-	local VOL="$3"
-
-	echo "Creating $NAME UBI volume..."
-	ubimkvol /dev/ubi0 -n "$VOL" -N "$NAME" -s "$SIZE" || ubimkvol /dev/ubi0 -n "$VOL" -N "$NAME" || _err "Error creating $NAME UBI volume."
-}
-
-ubi_resize() {
-	local NAME="$1"
-	local SIZE="$2"
-	[ "$SIZE" -gt 0 ] 2>/dev/null || _err "Size of partition to resize must be > 0."
-
-	echo "Resizing $NAME UBI volume to $SIZE bytes..."
-	ubirsvol /dev/ubi0 -N "$NAME" -s "$SIZE" || _err "Error resizing $NAME UBI volume."
+prepare_volume() {
+	local NAME="$1" SIZE="$2" INFO ID CAPACITY
+	INFO=$(ubinfo /dev/ubi0 -N "$NAME" 2>/dev/null) || _err "Missing target volume: $NAME."
+	ID=$(printf '%s\n' "$INFO" | awk '/^Volume ID:/ {print $3}')
+	CAPACITY=$(printf '%s\n' "$INFO" | tr '(),' '   ' | awk '/^Size:/ {print $4}')
+	case "$ID:$CAPACITY" in *[!0-9:]*|:*|*:) _err "Invalid target volume: $NAME." ;; esac
+	[ "$ID" -le 127 ] && [ "$CAPACITY" -ge "$SIZE" ] || _err "Image does not fit existing $NAME volume."
+	printf '/dev/ubi0_%s\n' "$ID"
 }
 
 validate_image() {
@@ -220,6 +184,10 @@ validate_image() {
 	if [ "$FILE" = rootfs.img ]; then
 		[ "$SIZE" -ge 96 ] && [ "$(hex 0 4)" = 68737173 ] &&
 			[ "$(hex 28 4)" = 04000000 ] && [ "$(hex 44 4)" = 00000000 ] || _err "Unsupported SquashFS image."
+		case "$(hex 12 4)" in
+			00100000|00200000|00400000|00800000|00000100|00000200|00000400|00000800|00001000) ;;
+			*) _err "Invalid SquashFS block size." ;;
+		esac
 		local used=$(hex 40 4 | sed 's/^\(..\)\(..\)\(..\)\(..\)$/\4\3\2\1/')
 		[ "$((0x$used))" -ge 96 ] && [ "$((0x$used))" -le "$SIZE" ] || _err "Invalid SquashFS size."
 	else
@@ -250,27 +218,11 @@ hex() {
 }
 
 install_image() {
-	local FILE="$1" NAME="$2" UBI_VOLNAME="$3" SIZE="$4" SHA256="$5"
+	local FILE="$1" NAME="$2" UBI_VOLNAME="$3" SIZE="$4" SHA256="$5" UBI="$6"
 	SHA256=$(printf '%s' "$SHA256" | tr 'A-F' 'a-f') || _err "Unable to normalize $NAME hash."
 
 	[ -z "$SHA256" ] && _err "$NAME hash not found in control file."
 	[ -z "$SIZE" ] && _err "$NAME file size not found in control file."
-
-	local UBI=$(ubi_dev "$UBI_VOLNAME")
-	local UBI_VOL=$(ubi_default_order "$UBI_VOLNAME")
-	[ "$UBI_VOL" -ge 0 ] 2>/dev/null || _err "Invalid UBI volume '$UBI_VOLNAME'."
-	if [ -z "$UBI" ]; then
-		ubi_create "$UBI_VOLNAME" "$SIZE" "$UBI_VOL"
-		UBI=$(ubi_dev "$UBI_VOLNAME")
-		[ -n "$UBI" ] || _err "Error finding UBI volume '$UBI_VOLNAME' after create."
-	else
-		UBI_SIZE=$(ubi_size "$UBI_VOLNAME")
-		[ -n "$UBI_SIZE" ] || _err "Invalid UBI volume '$UBI_VOLNAME' while resizing."
-		if [ "$UBI_SIZE" -lt "$SIZE" ]; then
-			ubi_resize "$UBI_VOLNAME" "$SIZE"
-		fi
-	fi
-	
 
 	echo "Installing $NAME image to $UBI_VOLNAME ($UBI)..."
 	ubiupdatevol -s "$SIZE" "$UBI" - < "$WORKDIR/$FILE" || _err "Error installing $NAME to '$UBI'."
@@ -348,6 +300,10 @@ LOCK="/tmp/8311-firmware-upgrade.lock"
 	case "$INSTALL_BANK" in A|B) ;; *) _err "Invalid inactive firmware bank." ;; esac
 	[ "$(fw_printenv -n commit_bank 2>/dev/null)" = "$(active_fwbank)" ] ||
 		_err "Confirm or leave the current trial before installing another firmware."
+	# Resolve every target once and reject missing/undersized volumes before writes.
+	KERNEL_UBI=$(prepare_volume "kernel$INSTALL_BANK" "$SIZE_KERNEL") || exit 1
+	BOOTCORE_UBI=$(prepare_volume "bootcore$INSTALL_BANK" "$SIZE_BOOTCORE") || exit 1
+	ROOTFS_UBI=$(prepare_volume "rootfs$INSTALL_BANK" "$SIZE_ROOTFS") || exit 1
 	echo "Active firmware bank is $(active_fwbank), will install to bank $INSTALL_BANK."
 
 		echo
@@ -358,9 +314,9 @@ LOCK="/tmp/8311-firmware-upgrade.lock"
 
 		fwenv_set "img_valid$INSTALL_BANK" false || _err "Cannot mark the target bank incomplete."
 		rm -f /tmp/8311-alt-firmware
-		install_image "kernel.bin" "Kernel" "kernel$INSTALL_BANK" "$SIZE_KERNEL" "$SHA256_KERNEL"
-		install_image "bootcore.bin" "Bootcore" "bootcore$INSTALL_BANK" "$SIZE_BOOTCORE" "$SHA256_BOOTCORE"
-		install_image "rootfs.img" "RootFS" "rootfs$INSTALL_BANK" "$SIZE_ROOTFS" "$SHA256_ROOTFS"
+		install_image "kernel.bin" "Kernel" "kernel$INSTALL_BANK" "$SIZE_KERNEL" "$SHA256_KERNEL" "$KERNEL_UBI"
+		install_image "bootcore.bin" "Bootcore" "bootcore$INSTALL_BANK" "$SIZE_BOOTCORE" "$SHA256_BOOTCORE" "$BOOTCORE_UBI"
+		install_image "rootfs.img" "RootFS" "rootfs$INSTALL_BANK" "$SIZE_ROOTFS" "$SHA256_ROOTFS" "$ROOTFS_UBI"
 		fwenv_set "img_valid$INSTALL_BANK" true || _err "Cannot mark the installed bank complete."
 
 		if $NO_COMMIT; then

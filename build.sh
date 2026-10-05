@@ -275,11 +275,11 @@ OUT_KERNEL="$REAL_OUT/kernel.bin"
 IMG_OUT="${IMG_OUT:-"$REAL_OUT/local-upgrade.img"}"
 TAR_OUT="${TAR_OUT:-"$REAL_OUT/local-upgrade.tar"}"
 
-mksquashfs "$ROOT_DIR" "$ROOTFS" -all-root -noappend -no-xattrs -comp xz -b 256K -all-time "$GIT_EPOCH" -mkfs-time "$GIT_EPOCH" || _err "Error creating new rootfs image"
+mksquashfs "$ROOT_DIR" "$ROOTFS" -all-root -noappend -no-xattrs -comp xz -b 512K -all-time "$GIT_EPOCH" -mkfs-time "$GIT_EPOCH" || _err "Error creating new rootfs image"
 
 . mods/reset-mods.sh
 
-mksquashfs "$ROOT_DIR" "$ROOTFS_RESET" -all-root -noappend -no-xattrs -comp xz -b 256K -all-time "$GIT_EPOCH" -mkfs-time "$GIT_EPOCH" || _err "Error creating new factory reset rootfs image"
+mksquashfs "$ROOT_DIR" "$ROOTFS_RESET" -all-root -noappend -no-xattrs -comp xz -b 512K -all-time "$GIT_EPOCH" -mkfs-time "$GIT_EPOCH" || _err "Error creating new factory reset rootfs image"
 
 touch -d "@$GIT_EPOCH" "$ROOTFS" "$ROOTFS_RESET"
 OUT_UROOTFS="$REAL_OUT/urootfs.img"

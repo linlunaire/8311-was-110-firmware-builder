@@ -47,6 +47,7 @@ def uimage_fixture(payload):
 def squashfs_fixture():
     data = bytearray(128)
     data[:4] = b"hsqs"
+    struct.pack_into("<I", data, 12, 262144)
     struct.pack_into("<HH", data, 28, 4, 0)
     struct.pack_into("<Q", data, 40, len(data))
     return data
@@ -170,6 +171,7 @@ class UpgradeTests(ShellFixture):
         (self.root / "env/commit_bank").write_text("A")
         self.command("flock", '[ "${LOCK_FAIL:-0}" = 0 ]')
         self.command("ubinfo", '''
+[ "${MISSING_VOLUME:-}" != "$3" ] || exit 1
 case "$3" in
     kernelA) id=0 ;; bootcoreA) id=1 ;; rootfsA) id=2 ;;
     kernelB) id=3 ;; bootcoreB) id=4 ;; rootfsB) id=5 ;;
@@ -178,7 +180,9 @@ esac
 if [ "${REMAPPED_A:-0}" = 1 ]; then
     case "$3" in bootcoreA) id=2 ;; rootfsA) id=1 ;; esac
 fi
-printf 'Volume ID: %s\nSize: 1 LEBs (4096 bytes, 4 KiB)\n' "$id"
+capacity=4096
+[ "$3" != rootfsB ] || capacity=${ROOTFS_CAPACITY:-4096}
+printf 'Volume ID: %s\nSize: 1 LEBs (%s bytes, 4 KiB)\n' "$id" "$capacity"
 ''')
         self.command("ubiupdatevol", '''
 echo "write:$3" >> "$OPS"
@@ -285,6 +289,14 @@ printf '%s' "$2" > "$FIXTURE/env/$1"
         result = self.run_script(self.upgrade, "--install", "--yes", self.archive())
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.operations(), [])
+
+    def test_missing_or_undersized_last_volume_is_rejected_before_any_write(self):
+        for key, value in (("MISSING_VOLUME", "rootfsB"), ("ROOTFS_CAPACITY", "96")):
+            self.env[key] = value
+            result = self.run_script(self.upgrade, "--install", "--yes", self.archive())
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(self.operations(), [])
+            del self.env[key]
 
     def test_readback_reader_failure_cannot_mark_a_bank_valid_even_with_correct_bytes(self):
         self.command("head", '''

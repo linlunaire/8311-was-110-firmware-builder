@@ -144,7 +144,7 @@ def build(base, output, version):
         package = work / "package"
         package.mkdir()
         image = package / "rootfs.img"
-        run("mksquashfs", root, image, "-all-root", "-noappend", "-no-xattrs", "-comp", "xz", "-b", "256K",
+        run("mksquashfs", root, image, "-all-root", "-noappend", "-no-xattrs", "-comp", "xz", "-b", "512K",
             "-all-time", epoch, "-mkfs-time", epoch, "-no-progress", "-processors", "2")
         verification = work / "verified"
         run("unsquashfs", "-no-progress", "-d", verification, image)
@@ -169,6 +169,7 @@ def build(base, output, version):
                 archive.addfile(info, io.BytesIO(data))
         manifest = {"method": "pinned upstream release plus source overlays", "source_commit": revision,
                     "version": version, "target": "WAS-110", "base_url": BASE_URL, "base_tar_sha256": BASE_SHA256,
+                    "squashfs_block_bytes": 524288,
                     "ci_run_url": (f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/"
                                    f"{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
                                    if os.environ.get("GITHUB_REPOSITORY") and os.environ.get("GITHUB_RUN_ID") else None),
