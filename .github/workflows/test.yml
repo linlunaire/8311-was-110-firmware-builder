@@ -86,7 +86,7 @@ jobs:
           echo '5d72e7552e396127b59a548c6163113d088d545708aecb0fed38097b862288f8  stock/upstream-v2.8.3.7z' | sha256sum --check
           7z x -so stock/upstream-v2.8.3.7z local-upgrade.tar > stock/upstream-v2.8.3-local-upgrade.tar
       - name: Build and verify every rootfs file, mode and symlink
-        run: sudo python3 tools/build_from_release.py --base stock/upstream-v2.8.3-local-upgrade.tar --output out/release
+        run: sudo --preserve-env=GITHUB_SERVER_URL,GITHUB_REPOSITORY,GITHUB_RUN_ID python3 tools/build_from_release.py --base stock/upstream-v2.8.3-local-upgrade.tar --output out/release
       - uses: actions/upload-artifact@v4
         with:
           name: WAS110-basic-${{ github.sha }}
