@@ -60,9 +60,19 @@ end
 
 function fwenv_get(key, default, _8311, base64)
 	if not key then return false end
-	local snapshot, reason = read_fwenvs()
-	if not snapshot then return nil, reason end
-	local value = snapshot[(_8311 and "8311_" or "") .. key .. (base64 and "_b64" or "")]
+	local stored_key = (_8311 and "8311_" or "") .. key .. (base64 and "_b64" or "")
+	local value, reason = read_command({ "/usr/bin/timeout", "-k", "1", "5", "/usr/sbin/fw_printenv", "-n", "--", stored_key }, nil, true)
+	if value then
+		value = value:gsub('[\r\n]+$', "")
+	elseif reason == "timeout" or reason == "limit" then
+		return nil, reason
+	else
+		-- A single-key failure cannot establish absence. Only a complete read can.
+		local snapshot
+		snapshot, reason = read_fwenvs()
+		if not snapshot then return nil, reason end
+		value = snapshot[stored_key]
+	end
 	if not value or value == "" then return default or "" end
 	return base64 and base64_codec.dec(value) or value
 end
@@ -74,10 +84,10 @@ function read_command(command, limit, strict_stderr)
 		size = size + #chunk
 		if size <= limit then table.insert(chunks, chunk) end
 	end, function(chunk) stderr_size = stderr_size + #chunk end)
+	if size + stderr_size > limit then return nil, "limit" end
 	if not result or result.code ~= 0 then
 		return nil, result and (result.code == 124 or result.code == 137 or result.code == 143) and "timeout" or "read"
 	end
-	if size + stderr_size > limit then return nil, "limit" end
 	if strict_stderr and stderr_size > 0 then return nil, "read" end
 	return table.concat(chunks)
 end

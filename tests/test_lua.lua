@@ -138,9 +138,18 @@ local function setup()
 			if command[1] == "/usr/sbin/fw_printenv" or command[5] == "/usr/sbin/fw_printenv" then
 				table.remove(s.processes)
 				s.environment_reads = (s.environment_reads or 0) + 1
-				if output then output(s.environment or "") end
+				local raw = s.environment or ""
+				local code = s.env_read_code or 0
+				if command[6] == "-n" then
+					code = s.env_named_code or code
+					local key = command[8]:gsub("(%W)", "%%%1")
+					local value = ("\n" .. raw):match("\n" .. key .. "=([^\r\n]*)")
+					raw = value and (value .. "\n") or ""
+					if not value and code == 0 then code = 1 end
+				end
+				if output then output(raw) end
 				if stderr then stderr(s.env_stderr or "") end
-				return { code = s.env_read_code or 0 }
+				return { code = code }
 			end
 			if output then output(s.process_output or "") end
 			return { code = s.process_code or 0 }
@@ -267,6 +276,7 @@ check("field validation reads choices directly without resolving display default
 	assert(tools.validate_config_value(fields.lang, "zh_cn"))
 	assert(not tools.validate_config_value(fields.lang, ".type"))
 	assert(not tools.validate_config_value(fields.timezone, "Unknown/Zone"))
+	s.environment = "img_versionA=fixtureA\nimg_versionB=fixtureB\n"
 	controller.fwenvs_8311()
 	assert(#s.calls == 4 and s.environment_reads == 2, "display defaults should retain bounded environment lookups")
 end)
@@ -482,6 +492,24 @@ check("environment read states and verification stages preserve exact stored val
 	s.call_code = 7
 	ok, stage = tools.fwenv_set("text", "", true, true)
 	assert(not ok and stage == "write")
+end)
+
+check("single-key reads fall back only when absence remains uncertain", function()
+	local s, tools = setup()
+	s.environment = "commit_bank=A\n"
+	assert(tools.fwenv_get("commit_bank") == "A" and s.environment_reads == 1)
+	s.environment_reads, s.env_named_code = 0, 7
+	assert(tools.fwenv_get("commit_bank") == "A" and s.environment_reads == 2)
+	s.environment_reads, s.env_named_code = 0, nil
+	assert(tools.fwenv_get("missing", "fallback") == "fallback" and s.environment_reads == 2)
+	for _, code in ipairs({ 124, 137, 143 }) do
+		s.environment_reads, s.env_named_code = 0, code
+		local value, reason = tools.fwenv_get("commit_bank")
+		assert(value == nil and reason == "timeout" and s.environment_reads == 1)
+	end
+	s.environment_reads, s.env_named_code, s.env_stderr = 0, 7, string.rep("x", 131073)
+	local value, reason = tools.fwenv_get("commit_bank")
+	assert(value == nil and reason == "limit" and s.environment_reads == 1)
 end)
 
 check("environment diagnostics and excessive stderr cannot become an empty success", function()

@@ -5,7 +5,8 @@ bounded_run() {
 	local bytes="$1" seconds="$2" unit=512
 	shift 2
 	[ -z "${BASH_VERSION:-}" ] || unit=1024
-	( ulimit -f "$(( (bytes + unit - 1) / unit ))" || exit 126
+	( ulimit -c 0 || exit 126
+	  ulimit -f "$(( (bytes + unit - 1) / unit ))" || exit 126
 	  exec timeout -k 1 "$seconds" "$@" )
 }
 
