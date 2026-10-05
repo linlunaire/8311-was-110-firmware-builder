@@ -10,6 +10,7 @@ arg = saved_arg
 
 local passed = 0
 local function check(name, fn)
+	if RUN_LOCK_WORKER then return end
 	fn()
 	passed = passed + 1
 	print("ok - " .. name)
@@ -120,6 +121,10 @@ local function setup()
 			return s.call_code or 0
 		end,
 		process = { exec = function(command, output)
+			if command[1] == "/usr/sbin/8311-temp-space.sh" then
+				s.space_checks = (s.space_checks or 0) + 1
+				return { code = s.space_code or 0 }
+			end
 			if command[5] == "/usr/sbin/8311-bank-check.sh" then
 				s.bank_checks = (s.bank_checks or 0) + 1
 				return { code = s.bank_invalid and 1 or 0 }
@@ -131,6 +136,8 @@ local function setup()
 			end
 			table.insert(s.processes, command)
 			if command[1] == "/usr/sbin/fw_printenv" or command[5] == "/usr/sbin/fw_printenv" then
+				table.remove(s.processes)
+				s.environment_reads = (s.environment_reads or 0) + 1
 				if output then output(s.environment or "") end
 				return { code = s.env_read_code or 0 }
 			end
@@ -206,6 +213,8 @@ local function setup()
 	return s, tools, controller
 end
 
+if RUN_LOCK_WORKER then RUN_LOCK_WORKER(setup); return end
+
 check("HTML escaping handles adjacent special characters and nil", function()
 	local _, tools = setup()
 	assert(tools.html_escape([[A&B<demo>"']]) == "A&amp;B&lt;demo&gt;&quot;&#039;")
@@ -235,7 +244,7 @@ check("one bounded environment snapshot preserves empty and literal values", fun
 	assert(fields.hostname.value == "" and fields.loid.value == "a=b&c\\n")
 	assert(fields.bootdelay.value == "5" and fields.uart_select.value == "disable")
 	assert(fields.sw_verA.default == "one" and fields.sw_verB.default == "two")
-	assert(#s.processes == 1 and #s.calls == 4, "configuration spawned redundant environment queries")
+	assert(s.environment_reads == 1 and #s.calls == 4, "configuration spawned redundant environment queries")
 	s.environment = string.rep("x", 131073)
 	assert(tools.read_fwenvs() == nil, "oversized environment accepted")
 end)
@@ -258,7 +267,7 @@ check("field validation reads choices directly without resolving display default
 	assert(not tools.validate_config_value(fields.lang, ".type"))
 	assert(not tools.validate_config_value(fields.timezone, "Unknown/Zone"))
 	controller.fwenvs_8311()
-	assert(#s.calls == 6, "display defaults should retain their existing lookup behavior")
+	assert(#s.calls == 4 and s.environment_reads == 2, "display defaults should retain bounded environment lookups")
 end)
 
 check("link diagnostics preserve counter precision and parse only bounded service rule counters", function()
@@ -430,10 +439,48 @@ check("environment writes report failure and verify readback", function()
 	s.call_code = 1
 	assert(not tools.fwenv_set("fix_vlans", "1", true, false))
 	s.call_code = 0
-	s.readback = "0\n"
+	s.environment = "8311_fix_vlans=0\n"
 	assert(not tools.fwenv_set("fix_vlans", "1", true, false))
-	s.readback = "1\n"
+	s.environment = "8311_fix_vlans=1\n"
 	assert(tools.fwenv_set("fix_vlans", "1", true, false))
+end)
+
+check("clearing an environment field requires a successful complete readback", function()
+	for _, code in ipairs({ 7, 124, 137 }) do
+		for _, output in ipairs({ "", "8311_fix_vlans=\n" }) do
+			local s, tools = setup()
+			s.env_read_code, s.environment = code, output
+			assert(not tools.fwenv_set("fix_vlans", "", true, false), "failed read reported a confirmed clear")
+		end
+	end
+	local s, tools = setup()
+	s.environment = "bootdelay=5\n"
+	assert(tools.fwenv_set("fix_vlans", "", true, false), "successful snapshot without key must confirm a clear")
+	s.environment = "8311_fix_vlans=\n"
+	assert(tools.fwenv_set("fix_vlans", "", true, false))
+end)
+
+check("environment read states and verification stages preserve exact stored values", function()
+	local s, tools = setup()
+	s.environment = "8311_text_b64=" .. real_base64.enc("a\n=b") .. "\ncommit_bank=A\n"
+	assert(tools.fwenv_get("missing", "fallback", true) == "fallback")
+	assert(tools.fwenv_get("text", nil, true, true) == "a\n=b")
+	assert(tools.fwenv_set("text", "a\n=b", true, true))
+	s.environment = "8311_text_b64=other\n"
+	local ok, stage, reason = tools.fwenv_set("text", "a\n=b", true, true)
+	assert(not ok and stage == "verify" and reason == "mismatch")
+	s.env_read_code = 124
+	ok, stage, reason = tools.fwenv_set("text", "", true, true)
+	assert(not ok and stage == "verify" and reason == "timeout")
+	assert(tools.fwenv_get("missing", "fallback") == nil)
+	s.env_read_code = 0
+	for _, raw in ipairs({ "warning\n8311_text_b64=\n", "8311_text_b64=\n8311_text_b64=duplicate\n" }) do
+		s.environment = raw
+		assert(tools.read_fwenvs() == nil)
+	end
+	s.call_code = 7
+	ok, stage = tools.fwenv_set("text", "", true, true)
+	assert(not ok and stage == "write")
 end)
 
 check("VLAN status reports only bounded states, pending reloads and a live monitor", function()
@@ -564,6 +611,19 @@ check("unchanged defaults avoid flash writes and changed VLANs notify the daemon
 	assert(s.files["/tmp/8311-vlans.reload"])
 end)
 
+check("configuration exposes unconfirmed and untouched fields after a readback failure", function()
+	local s, tools, controller = setup()
+	controller.populate_8311_fwenvs = function() return {{items={
+		{id="hostname", value="old", type="text"}, {id="lpwd", value="old", type="text"}
+	}}} end
+	s.form = {hostname="new", lpwd="new"}
+	local writes=0
+	tools.fwenv_set=function() writes=writes+1; return false, "verify", "timeout" end
+	controller.action_save()
+	assert(writes==1 and s.status==500 and s.json.failed_stage=="verify" and s.json.verify_reason=="timeout")
+	assert(#s.json.saved==0 and s.json.unconfirmed[1]=="hostname" and s.json.pending[1]=="lpwd")
+end)
+
 check("configuration and hook mutations reject GET and missing hook content", function()
 	local s, _, controller = setup()
 	s.method = "GET"
@@ -680,6 +740,18 @@ check("firmware uploads handle unrelated fields, short writes and atomic promoti
 	assert(not s.files[staged_firmware .. ".incoming.123"] and s.closed == 2)
 	assert(#s.processes == 1 and s.processes[1][2] == "--validate")
 	assert(s.processes[1][3] == staged_firmware and s.render.firmware_file_exists)
+end)
+
+check("upload resource prechecks precede multipart parsing and copying", function()
+	local s, _, controller = setup()
+	s.space_code=1
+	s.content_length="1048576"
+	s.form={action="validate", token="fixture-token", firmware_file="upload.tar"}
+	controller.action_firmware()
+	assert(s.status==503 and not s.security_checked and not s.upload_handled and #s.writes==0)
+	s.content_length="1024"
+	controller.action_firmware()
+	assert(s.status==500 and s.security_checked and not s.upload_handled and not s.files[staged_firmware])
 end)
 
 check("failed or incomplete uploads preserve the existing file and never validate partial bytes", function()

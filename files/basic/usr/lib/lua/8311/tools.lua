@@ -16,6 +16,7 @@ local fs = require "nixio.fs"
 local nixio = require "nixio"
 local bit = require "nixio.bit"
 local table = require "table"
+local base64_codec = require "base64"
 
 function html_escape(text)
 	if text == nil then text = "" end
@@ -59,13 +60,11 @@ end
 
 function fwenv_get(key, default, _8311, base64)
 	if not key then return false end
-
-	local _8311_arg, base64_arg, default_arg = "", "", ""
-	if _8311 then _8311_arg = "--8311 " end
-	if base64 then base64_arg = "--base64 " end
-	if default then default_arg = " " .. util.shellquote(default) end
-
-	return string.gsub(util.exec("fwenv_get " .. _8311_arg .. base64_arg .. util.shellquote(key) .. default_arg), '[\r\n]+$', "")
+	local snapshot, reason = read_fwenvs()
+	if not snapshot then return nil, reason end
+	local value = snapshot[(_8311 and "8311_" or "") .. key .. (base64 and "_b64" or "")]
+	if not value or value == "" then return default or "" end
+	return base64 and base64_codec.dec(value) or value
 end
 
 function read_command(command, limit)
@@ -75,15 +74,22 @@ function read_command(command, limit)
 		size = size + #chunk
 		if size <= limit then table.insert(chunks, chunk) end
 	end)
-	if not result or result.code ~= 0 or size > limit then return nil end
+	if not result or result.code ~= 0 then
+		return nil, result and (result.code == 124 or result.code == 137 or result.code == 143) and "timeout" or "read"
+	end
+	if size > limit then return nil, "limit" end
 	return table.concat(chunks)
 end
 
 function read_fwenvs()
-	local raw = read_command({ "/usr/bin/timeout", "-k", "1", "5", "/usr/sbin/fw_printenv" })
-	if not raw then return nil end
+	local raw, reason = read_command({ "/usr/bin/timeout", "-k", "1", "5", "/usr/sbin/fw_printenv" })
+	if not raw then return nil, reason end
 	local values = {}
-	for key, value in ("\n" .. raw):gmatch("\n([^\r\n=]+)=([^\r\n]*)") do values[key] = value end
+	for line in raw:gmatch("[^\n]+") do
+		local key, value = line:match("^([^=%s]+)=([^\r\n]*)\r?$")
+		if not key or values[key] ~= nil then return nil, "format" end
+		values[key] = value
+	end
 	return values
 end
 
@@ -122,20 +128,32 @@ function fw_setenv_8311(t)
 end
 
 function fwenv_set(key, value, _8311, base64)
-	if not key then return false end
+	if not key then return false, "write" end
 
 	local _8311_arg, base64_arg = "", ""
 	if _8311 then _8311_arg = "--8311 " end
 	if base64 then base64_arg = "--base64 " end
 
 	if sys.call("fwenv_set " .. _8311_arg .. base64_arg .. "-- " .. util.shellquote(key) .. " " .. util.shellquote(value or "")) ~= 0 then
-		return false
+		return false, "write"
 	end
-	return fwenv_get(key, nil, _8311, base64) == (value or "")
+	-- A successful full read distinguishes an absent field from a failed read.
+	local snapshot, reason = read_fwenvs()
+	if not snapshot then return false, "verify", reason end
+	local stored_key = (_8311 and "8311_" or "") .. key .. (base64 and "_b64" or "")
+	local expected = value or ""
+	if base64 then expected = base64_codec.enc(expected) end
+	if (snapshot[stored_key] or "") ~= expected then return false, "verify", "mismatch" end
+	return true
 end
 
 function request_vlan_reload()
 	return fs.writefile("/tmp/8311-vlans.reload", "\n") == 1
+end
+
+function tmp_space(bytes)
+	local result = sys.process.exec({ "/usr/sbin/8311-temp-space.sh", tostring(bytes) })
+	return result and result.code == 0
 end
 
 function bank_available(bank)

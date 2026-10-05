@@ -35,6 +35,14 @@ publish_status() {
 	LAST_STATUS="$key"
 }
 
+read_fingerprint() {
+	local value
+	value=$(cat "$OUTPUT") || return 1
+	[ "${#value}" -eq 64 ] || return 1
+	case "$value" in *[!0-9a-fA-F]*) return 1 ;; esac
+	printf '%s\n' "$value"
+}
+
 publish_status starting none 0
 
 echo "8311 VLANs daemon: start monitoring" | to_console
@@ -69,8 +77,7 @@ while true; do
 		# File output avoids holding a command-substitution pipe open if a timed
 		# out hook leaves a descendant running. flock remains the overlap guard.
 		if timeout -k 2 10 /usr/sbin/8311-detect-config.sh -H > "$OUTPUT" 2>&1 &&
-			grep -Eq '^[0-9a-fA-F]{64}$' "$OUTPUT"; then
-			HASH=$(cat "$OUTPUT")
+			HASH=$(read_fingerprint); then
 			HOOK_HASH="absent"
 			if [ -f "$HOOK" ]; then
 				HOOK_HASH=$(sha256sum "$HOOK") || { FAILED=true; FAIL_STAGE=hook; }
@@ -80,8 +87,7 @@ while true; do
 			# change. Driver/OLT updates can remove filters from existing links.
 			if ! $FAILED && [ -n "$LAST_HASH" ] && [ "$RULE_CHECK_CYCLES" -le 0 ]; then
 				if timeout -k 1 10 /usr/sbin/8311-vlan-rules-hash.sh > "$OUTPUT" 2>&1 &&
-					grep -Eq '^[0-9a-fA-F]{64}$' "$OUTPUT"; then
-					RULE_HASH=$(cat "$OUTPUT")
+					RULE_HASH=$(read_fingerprint); then
 					RULE_CHECK_CYCLES=6
 					if [ "$RULE_HASH" != "$LAST_RULE_HASH" ]; then
 						LAST_HASH=""
@@ -99,8 +105,7 @@ while true; do
 				if timeout -k 5 30 flock -n /tmp/8311-fix-vlans.lock -c "$CMD" > "$OUTPUT" 2>&1; then
 					tail -c 8192 "$OUTPUT" | to_console
 					if timeout -k 1 10 /usr/sbin/8311-vlan-rules-hash.sh > "$OUTPUT" 2>&1 &&
-						grep -Eq '^[0-9a-fA-F]{64}$' "$OUTPUT"; then
-						LAST_RULE_HASH=$(cat "$OUTPUT")
+						LAST_RULE_HASH=$(read_fingerprint); then
 						RULE_CHECK_CYCLES=6
 						LAST_HASH="$HASH"
 						REDETECT=false

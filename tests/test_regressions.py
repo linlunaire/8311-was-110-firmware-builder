@@ -2,14 +2,19 @@
 import base64
 import hashlib
 import io
+import json
 import os
 from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import struct
+import sys
 import tarfile
 import tempfile
+import time
 import unittest
+import zlib
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +37,21 @@ def shell_command():
     return ["/bin/sh"]
 
 
+def uimage_fixture(payload):
+    header = bytearray(struct.pack(">7I4B32s", 0x27051956, 0, 0, len(payload), 0, 0,
+                                   zlib.crc32(payload), 5, 5, 2, 0, b"fixture"))
+    struct.pack_into(">I", header, 4, zlib.crc32(header))
+    return header + payload
+
+
+def squashfs_fixture():
+    data = bytearray(128)
+    data[:4] = b"hsqs"
+    struct.pack_into("<HH", data, 28, 4, 0)
+    struct.pack_into("<Q", data, 40, len(data))
+    return data
+
+
 class ShellFixture(unittest.TestCase):
     def setUp(self):
         TMP_ROOT.mkdir(exist_ok=True)
@@ -44,6 +64,8 @@ class ShellFixture(unittest.TestCase):
         self.env = os.environ.copy()
         self.env.update(TEST_BIN=shell_path(self.bin), OPS=shell_path(self.ops),
                         FIXTURE=shell_path(self.root))
+        if os.name == "nt":
+            self.command("python3", "exec " + shlex.quote(sys.executable.replace("\\", "/")) + ' "$@"')
 
     def tearDown(self):
         assert self.root.resolve().is_relative_to(TMP_ROOT.resolve())
@@ -78,11 +100,69 @@ class ShellFixture(unittest.TestCase):
     def operations(self):
         return self.ops.read_text().splitlines() if self.ops.exists() else []
 
+    def limits(self):
+        (self.root / "lib").mkdir(exist_ok=True)
+        shutil.copyfile(ROOT / "files/common/lib/8311-limits.sh", self.root / "lib/8311-limits.sh")
+        if os.name == "nt":
+            # MSYS has no RLIMIT_FSIZE. Keep status/size checks; Linux CI exercises
+            # the real kernel limit, including rapid output and pontop's side file.
+            path = self.root / "lib/8311-limits.sh"
+            path.write_text(path.read_text().replace('ulimit -f "$(( (bytes + unit - 1) / unit ))" || exit 126', ':'),
+                            encoding="utf-8", newline="\n")
+        self.command("8311-temp-space.sh", '[ "${SPACE_FAIL:-0}" = 0 ]')
+        with (self.root / "lib/8311-limits.sh").open("a") as file:
+            file.write('\nrequire_tmp_space() { [ "${SPACE_FAIL:-0}" = 0 ]; }\n')
+
+    def binary_tools(self):
+        helper = self.root / "binary_tools.py"
+        helper.write_text('''import pathlib,sys,zlib
+kind,*args=sys.argv[1:]
+if kind == 'crc32':
+    data=pathlib.Path(args[0]).read_bytes() if args else sys.stdin.buffer.read()
+    print('%08x' % zlib.crc32(data))
+else:
+    start=int(args[args.index('-s')+1]); length=int(args[args.index('-n')+1])
+    print(pathlib.Path(args[-1]).read_bytes()[start:start+length].hex(),end='')
+''', encoding="utf-8")
+        for name in ("crc32", "hexdump"):
+            self.command(name, "exec " + shlex.quote(sys.executable.replace("\\", "/")) + " " +
+                         shlex.quote(shell_path(helper)) + " " + name + ' "$@"')
+
+    def start_script(self, script, *args):
+        return subprocess.Popen(shell_command() + [shell_path(script), *map(str, args)],
+                                env=self.env, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    def wait_entered(self, process):
+        deadline = time.monotonic() + 10
+        while not (self.root / "entered").exists():
+            if process.poll() is not None:
+                self.fail("Worker exited before holding the lock: " + "".join(process.communicate()))
+            if time.monotonic() >= deadline:
+                self.fail("Worker did not enter its critical section")
+            time.sleep(0.01)
+
 
 class UpgradeTests(ShellFixture):
     def setUp(self):
         super().setUp()
         self.upgrade = self.script("files/common/usr/sbin/8311-firmware-upgrade.sh", True)
+        self.limits()
+        self.binary_tools()
+        if os.name == "nt":
+            # A native Windows Python CRC helper cannot inherit an MSYS FIFO.
+            # Preserve both statuses with a file adapter; Linux exercises FIFO.
+            source = self.upgrade.read_text()
+            adapter = '''stream_digest() {
+    local algorithm="$1"; shift
+    "$@" > "$WORKDIR/stream" || { rm -f "$WORKDIR/stream"; return 1; }
+    "$algorithm" < "$WORKDIR/stream"
+    local code=$?
+    rm -f "$WORKDIR/stream"
+    return "$code"
+}
+'''
+            self.upgrade.write_text(source.replace("# Keep the lock inode in place;", adapter + "\n# Keep the lock inode in place;"),
+                                    encoding="utf-8", newline="\n")
         (self.root / "dev").mkdir()
         (self.root / "proc").mkdir()
         (self.root / "proc/cmdline").write_text("console=ttyS0 rootfsname=rootfsA\n")
@@ -119,9 +199,10 @@ printf '%s' "$2" > "$FIXTURE/env/$1"
         for name in ("ubimkvol", "ubirsvol", "mtd"):
             self.command(name, 'echo unexpected-write >> "$OPS"; exit 99')
 
-    def archive(self, overrides=None, omit=None, corrupt=None):
-        images = {"kernel.bin": b"kernel fixture\x00\xff", "bootcore.bin": b"bootcore fixture",
-                  "rootfs.img": b"rootfs fixture" * 5}
+    def archive(self, overrides=None, omit=None, corrupt=None, extra="", images_override=None):
+        images = {"kernel.bin": uimage_fixture(b"kernel fixture\x00\xff"),
+                  "bootcore.bin": uimage_fixture(b"bootcore fixture"), "rootfs.img": squashfs_fixture()}
+        images.update(images_override or {})
         control = {"FW_VERSION": "test", "FW_REVISION": "fixture", "FW_VARIANT": "basic"}
         for name, data in images.items():
             key = name.split(".")[0].upper()
@@ -130,7 +211,7 @@ printf '%s' "$2" > "$FIXTURE/env/$1"
         control.update(overrides or {})
         if corrupt:
             images[corrupt] += b"corrupt"
-        members = {"control": "".join(f"{key}={value}\n" for key, value in control.items()).encode(), **images}
+        members = {"control": ("".join(f"{key}={value}\n" for key, value in control.items()) + extra).encode(), **images}
         path = self.root / "upgrade.tar"
         with tarfile.open(path, "w", format=tarfile.USTAR_FORMAT) as archive:
             for name, data in members.items():
@@ -181,6 +262,40 @@ printf '%s' "$2" > "$FIXTURE/env/$1"
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.operations(), [])
 
+    def test_metadata_limits_target_and_formats_fail_before_any_write(self):
+        bad_crc = uimage_fixture(b"payload")
+        bad_crc[-1] ^= 1
+        for kwargs in ({"overrides": {"FW_VARIANT": "other"}},
+                       {"overrides": {"FW_TARGET": "OTHER-ONT"}},
+                       {"extra": "FW_VERSION=duplicate\n"},
+                       {"extra": "UNKNOWN=" + "x" * 5000 + "\n"},
+                       {"overrides": {"SIZE_ROOTFS": "33554433"}},
+                       {"overrides": {"SIZE_KERNEL": "0080"}},
+                       {"images_override": {"rootfs.img": b"x" * 128}},
+                       {"images_override": {"kernel.bin": b"x" * 128}},
+                       {"images_override": {"kernel.bin": bad_crc}}):
+            with self.subTest(kwargs=list(kwargs)):
+                result = self.run_script(self.upgrade, "--install", "--yes", self.archive(**kwargs))
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(self.operations(), [])
+                self.assert_clean_stage()
+
+    def test_insufficient_space_rejects_before_any_write(self):
+        self.env["SPACE_FAIL"] = "1"
+        result = self.run_script(self.upgrade, "--install", "--yes", self.archive())
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.operations(), [])
+
+    def test_readback_reader_failure_cannot_mark_a_bank_valid_even_with_correct_bytes(self):
+        self.command("head", '''
+PATH=${PATH#*:} head "$@" || exit $?
+case "$3" in "$FIXTURE"/dev/*) exit 7 ;; esac
+''')
+        result = self.run_script(self.upgrade, "--install", "--yes", self.archive())
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.root / "env/img_validB").read_text(), "false")
+        self.assertNotIn("env:img_validB:true", self.operations())
+
     def test_bad_metadata_is_rejected_before_any_write(self):
         for key, value in (("SIZE_ROOTFS", "0"), ("SIZE_ROOTFS", "-1"),
                            ("SIZE_ROOTFS", "123garbage"), ("SIZE_ROOTFS", "999"),
@@ -222,6 +337,13 @@ printf '%s' "$2" > "$FIXTURE/env/$1"
         self.assertEqual(self.operations(), [])
         self.assert_clean_stage()
 
+    def test_validation_no_longer_spawns_metadata_grep_and_cut_commands(self):
+        for name in ("grep", "cut"):
+            self.command(name, f'echo {name} >> "$OPS"; PATH=${{PATH#*:}} {name} "$@"')
+        result = self.run_script(self.upgrade, "--validate", self.archive())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.operations(), [])
+
     def test_cancel_returns_distinct_status_without_writes(self):
         result = self.run_script(self.upgrade, "--install", self.archive(), stdin="n\n")
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
@@ -256,6 +378,30 @@ printf '%s' "$2" > "$FIXTURE/env/$1"
         self.assertEqual((self.root / "env/commit_bank").read_text(), "A")
         self.assertEqual((self.root / "env/img_validB").read_text(), "true")
         self.assertNotIn("reboot", self.operations())
+
+    @unittest.skipUnless(sys.platform == "linux", "Requires real Linux flock")
+    def test_real_upgrade_processes_cannot_overlap(self):
+        (self.bin / "flock").unlink()
+        self.command("ubiupdatevol", '''
+echo "write:$3" >> "$OPS"
+touch "$FIXTURE/entered"
+while [ ! -f "$FIXTURE/release" ]; do /bin/sleep 0.02; done
+cat > "$3"
+''')
+        archive = self.archive()
+        first = self.start_script(self.upgrade, "--install", "--yes", archive)
+        try:
+            self.wait_entered(first)
+            before = self.operations()
+            second = self.run_script(self.upgrade, "--install", "--yes", archive)
+            self.assertNotEqual(second.returncode, 0)
+            self.assertIn("already in progress", second.stderr)
+            self.assertEqual(self.operations(), before)
+        finally:
+            (self.root / "release").touch()
+            stdout, stderr = first.communicate(timeout=10)
+        self.assertEqual(first.returncode, 0, stdout + stderr)
+        self.assertEqual(len([op for op in self.operations() if op.startswith("write:")]), 3)
 
 
 class FwenvTests(ShellFixture):
@@ -369,10 +515,52 @@ tc_flower_replace() {
         self.assertEqual(self.operations(), [])
 
 
+class RuleFingerprintTests(ShellFixture):
+    def setUp(self):
+        super().setUp()
+        self.fingerprint = self.script("files/common/usr/sbin/8311-vlan-rules-hash.sh", True)
+        (self.root / "sys/class/net/eth0_0").mkdir(parents=True)
+        self.command("tc", "printf '%s\\n' 'filter vlan_id 41' '  index 3 ref 1 bind 1'")
+
+    def test_normalization_produces_one_structural_fingerprint(self):
+        result = self.run_script(self.fingerprint)
+        expected = hashlib.sha256(b"eth0_0 ingress\nfilter vlan_id 41\neth0_0 egress\nfilter vlan_id 41\n").hexdigest()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, expected + "\n")
+        self.assertEqual(list((self.root / "tmp").iterdir()), [])
+
+    def test_normalization_failure_never_fingerprints_empty_input(self):
+        self.command("sed", "exit 7")
+        result = self.run_script(self.fingerprint)
+        self.assertNotEqual(result.returncode, 0, "normalization failure became a successful empty hash")
+        self.assertEqual(result.stdout, "")
+
+    def test_hash_failure_and_mixed_diagnostics_are_rejected(self):
+        for output, code in (("0" * 64 + "  file", 7),
+                             ("diagnostic\\n" + "0" * 64 + "  file", 0)):
+            with self.subTest(output=output, code=code):
+                self.command("sha256sum", f"printf '%b\\n' '{output}'; exit {code}")
+                result = self.run_script(self.fingerprint)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+
+    def test_normalization_file_creation_or_write_failure_propagates(self):
+        (self.root / "unwritable").mkdir()
+        for action in ("exit 7", 'echo "$FIXTURE/unwritable"'):
+            self.command("mktemp", f'''
+case "$1" in *normalized*) {action} ;;
+*) PATH=${{PATH#*:}} mktemp "$@" ;; esac
+''')
+            result = self.run_script(self.fingerprint)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, "")
+
+
 class SupportTests(ShellFixture):
     def setUp(self):
         super().setUp()
         self.support = self.script("files/common/usr/sbin/8311-support.sh", True)
+        self.limits()
         self.command("flock", ":")
         self.command("fw_printenv", '''
 [ "${ENV_FAIL:-0}" = 0 ] || exit 5
@@ -430,6 +618,127 @@ printf '%s\n' '8311_reg_id_hex=736563726574' '8311_lpwd=secret-password' '8311_g
                 self.assertFalse(old.exists())
                 self.assertEqual([p for p in (self.root / "tmp").glob("8311-support.*") if p.is_dir()], [])
                 del self.env[failure]
+
+    def test_fast_output_growth_and_space_failure_never_publish_an_archive(self):
+        for source in ("fw_printenv", "omci_pipe.sh", "pontop", "logread"):
+            with self.subTest(source=source):
+                self.command(source, 'head -c 2097152 /dev/zero' +
+                             (' > "$FIXTURE/tmp/pontop.txt"' if source == "pontop" else ""))
+                result = self.run_script(self.support, "--raw")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Output limit exceeded", result.stderr)
+                self.assertFalse((self.root / "tmp/support.tar.gz").exists())
+                self.command(source, 'echo fixture' +
+                             (' > "$FIXTURE/tmp/pontop.txt"' if source == "pontop" else ""))
+        self.env["SPACE_FAIL"] = "1"
+        self.assertNotEqual(self.run_script(self.support).returncode, 0)
+        self.assertFalse((self.root / "tmp/support.tar.gz").exists())
+
+    def test_timeout_and_partial_failed_query_are_distinct(self):
+        for code, message in ((124, "Query timed out"), (7, "Query failed")):
+            self.command("8311-extvlan-decode.sh", f"echo partial; exit {code}")
+            result = self.run_script(self.support)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(message, result.stderr)
+            self.assertFalse((self.root / "tmp/support.tar.gz").exists())
+
+    @unittest.skipUnless(sys.platform == "linux", "Requires real Linux flock")
+    def test_real_generation_excludes_deletion_and_another_generator(self):
+        (self.bin / "flock").unlink()
+        self.command("fw_printenv", '''
+touch "$FIXTURE/entered"
+while [ ! -f "$FIXTURE/release" ]; do /bin/sleep 0.02; done
+echo 8311_fix_vlans=1
+''')
+        first = self.start_script(self.support)
+        try:
+            self.wait_entered(first)
+            for args in ((), ("--delete",)):
+                second = self.run_script(self.support, *args)
+                self.assertNotEqual(second.returncode, 0)
+                self.assertIn("already in progress", second.stderr)
+        finally:
+            (self.root / "release").touch()
+            stdout, stderr = first.communicate(timeout=10)
+        self.assertEqual(first.returncode, 0, stdout + stderr)
+        self.assertEqual(self.run_script(self.support, "--delete").returncode, 0)
+
+    @unittest.skipUnless(sys.platform == "linux", "Requires Linux locks and real timeout")
+    def test_timeout_descendants_never_allow_overlapping_support_work(self):
+        import fcntl
+        (self.bin / "flock").unlink()
+        timeout = [shutil.which("busybox"), "timeout"] if os.environ.get("TEST_SHELL") == "busybox" else [shutil.which("timeout")]
+        self.command("timeout", 'shift 2; shift; exec ' + " ".join(map(shlex.quote, timeout)) + ' -k 1 1 "$@"')
+        self.command("fw_printenv", '/bin/sleep 3 & wait')
+        result = self.run_script(self.support)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Query timed out", result.stderr)
+        with (self.root / "tmp/8311-support.lock").open("a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                # Some BusyBox versions signal only the immediate command. Its
+                # surviving child must retain the lock until it finishes.
+                second = self.run_script(self.support, "--delete")
+                self.assertNotEqual(second.returncode, 0)
+                deadline = time.monotonic() + 4
+                while True:
+                    try:
+                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        self.assertLess(time.monotonic(), deadline)
+                        time.sleep(0.02)
+
+
+@unittest.skipUnless(sys.platform == "linux", "Requires real POSIX record locks")
+class ConfigurationConcurrencyTests(ShellFixture):
+    def test_save_and_restore_share_a_real_lock_in_both_orders(self):
+        for first_action, second_action in (("save", "restore"), ("restore", "save")):
+            with self.subTest(first=first_action):
+                for name in ("entered", "release", "writers"):
+                    (self.root / name).unlink(missing_ok=True)
+                command = [sys.executable, str(ROOT / "tests/config_lock_worker.py"), str(self.root)]
+                first = subprocess.Popen(command + [first_action], cwd=ROOT, env=self.env,
+                                         text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                try:
+                    self.wait_entered(first)
+                    second = subprocess.run(command + [second_action], cwd=ROOT, env=self.env,
+                                            text=True, capture_output=True, timeout=4)
+                    self.assertEqual(second.returncode, 0, second.stderr)
+                    self.assertEqual(json.loads(second.stdout)["status"], 409)
+                    self.assertEqual((self.root / "writers").read_text().splitlines(), [first_action])
+                finally:
+                    (self.root / "release").touch()
+                    stdout, stderr = first.communicate(timeout=10)
+                self.assertEqual(first.returncode, 0, stderr)
+                self.assertEqual(json.loads(stdout), {"status": 200, "success": True})
+
+
+class TempSpaceTests(ShellFixture):
+    def setUp(self):
+        super().setUp()
+        self.space = self.script("files/common/usr/sbin/8311-temp-space.sh", True)
+        library = self.script("files/common/lib/8311-limits.sh", True)
+        (self.root / "lib").mkdir()
+        shutil.copyfile(library, self.root / "lib/8311-limits.sh")
+        (self.root / "proc").mkdir()
+        self.command("df", "printf 'Filesystem Blocks Used Available Capacity Mounted\\nfixture 0 0 %s 0%% /tmp\\n' \"${DISK_KB:-0}\"")
+
+    def test_memory_budget_handles_zero_block_tmp_and_finite_filesystem(self):
+        (self.root / "proc/meminfo").write_text("MemAvailable: 65536 kB\n")
+        self.assertEqual(self.run_script(self.space, "1048576").returncode, 0)
+        self.env["DISK_KB"] = "8192"
+        self.assertNotEqual(self.run_script(self.space, "1048576").returncode, 0)
+        self.env["DISK_KB"] = "100000"
+        self.assertNotEqual(self.run_script(self.space, "60000000").returncode, 0)
+
+    def test_old_kernel_memory_fallback_and_unreadable_stats_fail_closed(self):
+        (self.root / "proc/meminfo").write_text("MemFree: 16000 kB\nBuffers: 2000 kB\nCached: 10000 kB\nShmem: 8000 kB\n")
+        self.assertEqual(self.run_script(self.space, "1048576").returncode, 0)
+        self.assertNotEqual(self.run_script(self.space, "16000000").returncode, 0)
+        (self.root / "proc/meminfo").unlink()
+        self.assertNotEqual(self.run_script(self.space, "1048576").returncode, 0)
 
 
 class ExtractTests(ShellFixture):
@@ -599,6 +908,10 @@ echo present > "$FIXTURE/live-rules"
 ''')
         self.command("8311-vlan-rules-hash.sh", '''
 [ "${RULE_READ_FAIL:-0}" = 0 ] || exit 4
+count=$(cat "$FIXTURE/rule-reads" 2>/dev/null || echo 0)
+count=$((count+1)); echo "$count" > "$FIXTURE/rule-reads"
+[ "${RULE_FAIL_AT:-0}" != "$count" ] || exit 4
+[ "${MIXED_RULE_HASH:-0}" = 0 ] || echo diagnostic
 if [ -f "$FIXTURE/live-rules" ]; then printf '%064d\\n' 1; else printf '%064d\\n' 2; fi
 ''')
         for name in ("8311-detect-config.sh", "8311-fix-vlans.sh", "8311-vlan-rules-hash.sh"):
@@ -614,6 +927,20 @@ if [ -f "$FIXTURE/live-rules" ]; then printf '%064d\\n' 1; else printf '%064d\\n
         self.assertEqual(ops.count("fix"), 1)
         self.assertEqual(ops.count("detect"), 4)
         self.assertEqual([x for x in ops if x.startswith("sleep:")], ["sleep:5"] * 4)
+        fields = (self.root / "tmp/8311-vlans.status").read_text().strip().split("\t")
+        self.assertEqual(fields[4:], ["applied", "none", "0"])
+
+    def test_mixed_rule_output_is_rejected_and_transient_failure_keeps_last_success(self):
+        self.env["MIXED_RULE_HASH"] = "1"
+        self.run_daemon()
+        fields = (self.root / "tmp/8311-vlans.status").read_text().strip().split("\t")
+        self.assertEqual(fields[4:6], ["error", "rules"])
+        del self.env["MIXED_RULE_HASH"]
+        for name in ("operations", "cycle", "rule-reads", "fixes"):
+            (self.root / name).unlink(missing_ok=True)
+        self.env.update(MAX_CYCLES="9", RULE_FAIL_AT="2")
+        ops = self.run_daemon()
+        self.assertEqual(ops.count("fix"), 1, "failed snapshot caused a redundant rule application")
         fields = (self.root / "tmp/8311-vlans.status").read_text().strip().split("\t")
         self.assertEqual(fields[4:], ["applied", "none", "0"])
         self.assertGreater(int(fields[2]), 0)

@@ -20,7 +20,9 @@ jobs:
         with:
           submodules: true
       - name: Install test tools
-        run: sudo apt-get update && sudo apt-get install -y lua5.1 pcre2-utils busybox shellcheck
+        run: |
+          sudo apt-get update && sudo apt-get install -y lua5.1 pcre2-utils busybox shellcheck python3-pip
+          python3 -m pip install --target "$RUNNER_TEMP/8311-test-python" --only-binary=:all: --no-deps lupa==2.6
       - name: Check shell syntax
         run: |
           for script in build.sh create.sh wholeImage.sh; do bash -n "$script"; done
@@ -29,6 +31,7 @@ jobs:
         env:
           TEST_SHELL: ${{ matrix.shell }}
           TEST_SHELL_ARGS: ${{ matrix.shell == 'busybox' && 'sh' || '' }}
+          PYTHONPATH: ${{ runner.temp }}/8311-test-python
         run: python3 -m unittest discover -s tests -v
       - name: Check PON status polling
         run: node tests/status_poll_smoke.cjs

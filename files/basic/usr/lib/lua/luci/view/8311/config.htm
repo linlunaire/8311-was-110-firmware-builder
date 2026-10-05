@@ -32,6 +32,7 @@ local hook_script_placeholder = "#!/bin/sh\n# /ptconf/8311/vlan_fixes_hook.sh\n\
 	data-timeout="<%=esc(translate('The request timed out. Changes may already be saved. Reload the page to check before retrying.'))%>">
 <input type="hidden" name="token" value="<%= esc(token) %>" />
 <p id="config-save-message" role="status" aria-live="polite" style="display:none"></p>
+<a id="config-save-reload" href="" hidden><%=esc(translate('Reload stored settings'))%></a>
 <div id="cbi-system-poncfg" class="cbi-section-node cbi-section-node-tabbed" data-section-id="poncfg" data-initialized="true">
 <%- for catid, cat in pairs(fwenvs) do -%>
 	<div id="container.system.poncfg.<%= cat.id %>" data-tab="<%= cat.id %>" data-tab-title="<%= esc(cat.category) %>" <% if catid < 2 then %>data-tab-active="true"<% end %>>

@@ -179,7 +179,11 @@ SHA256_ROOTFS=$SHA256_ROOTFS
 CONTROL
 
 	echo "Creating local upgrade tar file"
-	cp -- "$UPGRADE_SCRIPT" "$WORK/upgrade.sh"
+	if grep -Fqx '. /lib/8311-limits.sh || exit 1' "$UPGRADE_SCRIPT"; then
+		python3 tools/standalone_upgrade.py "$UPGRADE_SCRIPT" files/common/lib/8311-limits.sh "$WORK/upgrade.sh"
+	else
+		cp -- "$UPGRADE_SCRIPT" "$WORK/upgrade.sh"
+	fi
 	cp -- "$KERNEL" "$WORK/kernel.bin"
 	cp -- "$BOOTCORE" "$WORK/bootcore.bin"
 	cp -- "$ROOTFS" "$WORK/rootfs.img"

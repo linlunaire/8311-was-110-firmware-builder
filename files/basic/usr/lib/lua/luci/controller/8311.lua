@@ -1020,7 +1020,7 @@ local function save_config()
 	for index, change in ipairs(changes) do
 		local item, value = change.item, change.value
 		local stored = item.base64 and value ~= "" and base64.enc(value) or value
-		local written = tools.fwenv_set(item.id, stored, not item.base, false)
+		local written, failed_stage, verify_reason = tools.fwenv_set(item.id, stored, not item.base, false)
 		if written then
 			table.insert(saved, item.id)
 			table.insert(saved_names, item.name or item.id)
@@ -1029,11 +1029,15 @@ local function save_config()
 			local pending = {}
 			for i = index + 1, #changes do table.insert(pending, changes[i].item.id) end
 			local message = translate("Saving stopped. Reload the page to check the stored settings before retrying.")
+			if failed_stage == "verify" then
+				message = translate("Changes were written, but readback could not be confirmed. Reload the page before retrying.")
+			end
 			if #saved_names > 0 then
 				message = message .. " " .. string.format(translate("Confirmed saved: %s."), table.concat(saved_names, ", "))
 			end
 			return { success = false, field = item.id, saved = saved, pending = pending,
-				failed_stage = written and "apply" or "write", vlan_reload = "not_requested",
+				failed_stage = written and "apply" or (failed_stage or "write"), verify_reason = verify_reason,
+				unconfirmed = not written and { item.id } or {}, vlan_reload = "not_requested",
 				errors = { [item.id] = translate("Unable to save or apply this setting. Check its stored value.") }, message = message }, 500
 		end
 		if item.id == "fix_vlans" or item.id == "internet_vlan" or item.id == "services_vlan" then
@@ -1116,9 +1120,13 @@ local function recover_settings(action, values)
 	end
 	local ok, response, status = pcall(function()
 		local saved = {}
-		for _, change in ipairs(plan.changes) do
-			if not tools.fwenv_set(change.id, change.value, true, false) then
-				return { success = false, field = change.id, saved = saved,
+		for index, change in ipairs(plan.changes) do
+			local written, stage, reason = tools.fwenv_set(change.id, change.value, true, false)
+			if not written then
+				local pending = {}
+				for i = index + 1, #plan.changes do table.insert(pending, plan.changes[i].id) end
+				return { success = false, field = change.id, saved = saved, pending = pending,
+					unconfirmed = { change.id }, failed_stage = stage or "write", verify_reason = reason,
 					message = string.format(translate("Restore stopped at %s. Confirmed writes: %d. Review configuration before retrying; the device was not rebooted."), change.name, #saved) }, 500
 			end
 			table.insert(saved, change.id)
@@ -1227,6 +1235,8 @@ local firmware_actions = { validate = true, cancel = true, install = true,
 	install_reboot = true, reboot = true, switch_reboot = true, commit = true }
 
 local function receive_firmware(path)
+	local length = tonumber(http.getenv("CONTENT_LENGTH")) or firmware_limit
+	if not tools.tmp_space(length) then return false, "Insufficient temporary space for the upload." end
 	if not fs.mkdir(firmware_directory, "rwx------") and
 		(fs.lstat(firmware_directory, "type") ~= "dir" or fs.lstat(firmware_directory, "uid") ~= 0) then
 		return false, "Unable to create the upload directory."
@@ -1329,6 +1339,10 @@ function action_firmware()
 		if not length then http.status(411, "Length Required"); return end
 		if not tools.is_finite(length) or length < 0 or length > firmware_limit + 65536 then
 			http.status(413, "Firmware upload too large"); return
+		end
+		-- The legacy parser and incoming copy can coexist. Account for both before parsing.
+		if length > 65536 and not tools.tmp_space(2 * length) then
+			http.status(503, "Insufficient temporary space for the upload"); return
 		end
 		if not dispatcher.test_post_security() then return end
 		values = formvalue()

@@ -12,8 +12,11 @@ import stat
 import subprocess
 import tarfile
 import tempfile
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from tools.standalone_upgrade import render_standalone
 BASE_URL = "https://github.com/djGrrr/8311-was-110-firmware-builder/releases/tag/v2.8.3"
 BASE_SHA256 = "9c40000d29b19bdf1b46f081f1438cc54638713d8925836e6935fbaa76d9b653"
 COMPONENTS = {
@@ -123,7 +126,7 @@ def build(base, output, version):
                 run("python3", ROOT / "tools/po2lmo.py", po, root / "usr/lib/lua/luci/i18n" / (po.stem + ".lmo"))
         values = {"FW_VER": version, "FW_VERSION": version,
                   "FW_LONG_VERSION": f"{version}_basic_{revision[:7]}",
-                  "FW_REV": revision[:7], "FW_REVISION": revision[:7], "FW_VARIANT": "basic", "FW_SUFFIX": ""}
+                  "FW_REV": revision[:7], "FW_REVISION": revision[:7], "FW_VARIANT": "basic", "FW_SUFFIX": "", "FW_TARGET": "WAS-110"}
         version_text = "".join(f"{key}={value}\n" for key, value in values.items())
         (root / "etc/8311_version").write_text(version_text)
         (root / "usr/lib/lua/8311/version.lua").write_text(
@@ -152,7 +155,9 @@ def build(base, output, version):
             path = image if name == "rootfs.img" else work / name
             control += f"SIZE_{key}={path.stat().st_size}\nSHA256_{key}={sha256(path)}\n"
         (package / "control").write_text(control)
-        shutil.copyfile(ROOT / "files/common/usr/sbin/8311-firmware-upgrade.sh", package / "upgrade.sh")
+        (package / "upgrade.sh").write_text(render_standalone(
+            (ROOT / "files/common/usr/sbin/8311-firmware-upgrade.sh").read_text(),
+            (ROOT / "files/common/lib/8311-limits.sh").read_text()))
         for name in ("kernel.bin", "bootcore.bin"):
             shutil.copyfile(work / name, package / name)
         tar = package / "local-upgrade.tar"
@@ -163,7 +168,10 @@ def build(base, output, version):
                 info.size, info.mtime, info.mode = len(data), epoch, 0o755 if name == "upgrade.sh" else 0o644
                 archive.addfile(info, io.BytesIO(data))
         manifest = {"method": "pinned upstream release plus source overlays", "source_commit": revision,
-                    "version": version, "base_url": BASE_URL, "base_tar_sha256": BASE_SHA256,
+                    "version": version, "target": "WAS-110", "base_url": BASE_URL, "base_tar_sha256": BASE_SHA256,
+                    "ci_run_url": (f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/"
+                                   f"{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+                                   if os.environ.get("GITHUB_REPOSITORY") and os.environ.get("GITHUB_RUN_ID") else None),
                     "unchanged_binary_entries": len(protected), "rootfs_roundtrip_verified": True,
                     "files": {path.name: sha256(path) for path in sorted(package.iterdir())}}
         (package / "build-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")

@@ -34,6 +34,7 @@
 - [自定义 VLAN 与 IPTV](docs/vlan-hook.md)
 - [验证记录](docs/validation.md)
 - [全项目检查与改进](docs/code-audit.md)
+- [稳定性与资源边界](docs/stability.md)
 - [固件槽说明](docs/firmware-banks.md)
 
 感谢 8311 社区及上游作者。源码与相关组件保留各自的许可证声明。

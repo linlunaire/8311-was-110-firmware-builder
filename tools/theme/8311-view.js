@@ -14,6 +14,7 @@ function switchTab(tab) {
 }
 
 function saveConfig(form) {
+	if (form.dataset.saveUnconfirmed === '1') return false;
 	const field = Array.from(form.elements);
 	var saveb = $('#save-btn');
 	var valid = true;
@@ -64,6 +65,10 @@ function saveConfig(form) {
 			}
 		}).fail(function (xhr, status) {
 			var response = xhr.responseJSON || {};
+			if (status === 'timeout' || xhr.status === 0 || xhr.status === 500) {
+				form.dataset.saveUnconfirmed = '1';
+				$('#config-save-reload').prop('hidden', false);
+			}
 			message.text(status === 'timeout' ? form.dataset.timeout :
 				(response.message || 'Unable to save configuration. Reload the page and retry.')).show();
 			Object.keys(response.errors || {}).forEach(function (name) {
@@ -75,7 +80,7 @@ function saveConfig(form) {
 				}
 			});
 		}).always(function () {
-			saveb.removeAttr('disabled').removeClass('spinning');
+			saveb.prop('disabled', form.dataset.saveUnconfirmed === '1').removeClass('spinning');
 		});
 	}
 
@@ -393,9 +398,11 @@ $(document).ready(function () {
 	var configForm = document.getElementById('8311-config');
 	if (configForm) {
 		$(configForm).on('input change', function () {
+			if (configForm.dataset.saveUnconfirmed === '1') return;
 			$('#config-save-message').text(configForm.dataset.unsaved).show();
 		});
 		function resetConfigFields() {
+			if (configForm.dataset.saveUnconfirmed === '1') return;
 			configForm.reset();
 			$('#save-btn').prop('disabled', false).removeClass('spinning');
 			if (fixVlansSelect && fixVlansSelect.length) toggleVlanFields();

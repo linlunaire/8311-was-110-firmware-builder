@@ -21,6 +21,7 @@ const html = `<!doctype html><meta charset="utf-8">
 data-unsaved="Unsaved changes" data-timeout="Request timed out; reload to check saved settings">
 <input type="hidden" name="token" value="fixture-token">
 <p id="config-save-message" role="status" style="display:none"></p>
+<a id="config-save-reload" href="" hidden>Reload stored settings</a>
 <div data-tab="pon" data-tab-active="true">
 <input id="widget.cbid.system.poncfg.gpon_sn" name="gpon_sn" value="TEST12345678" required data-cat-id="pon">
 <label class="error" for="widget.cbid.system.poncfg.gpon_sn"></label></div>
@@ -188,9 +189,17 @@ const server = http.createServer(async (req, res) => {
     holdRequests = true;
     await page.locator('#save-btn').click();
     await page.getByText('Request timed out; reload to check saved settings', { exact: true }).waitFor();
-    assert(await page.locator('#save-btn').isEnabled());
+    assert(await page.locator('#save-btn').isDisabled());
+    assert(await page.locator('#config-save-reload').isVisible());
+    const timedOutRequests = requests.length;
+    await page.evaluate(() => saveConfig(document.getElementById('8311-config')));
+    assert.equal(requests.length, timedOutRequests);
     holdRequests = false;
-    console.log('ok - a stalled configuration request times out and permits checking the saved state');
+    await page.locator('#config-save-reload').click();
+    await page.waitForLoadState('networkidle');
+    await page.evaluate(accelerateTimeouts);
+    assert(await page.locator('#save-btn').isEnabled());
+    console.log('ok - a timed out configuration save requires reading stored values before another submission');
 
     status = 500;
     await page.locator('#edit-hook-script-btn').click();

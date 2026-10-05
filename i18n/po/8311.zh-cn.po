@@ -888,6 +888,12 @@ msgstr "配置已保存，但 VLAN 脚本恢复失败。请在重启前检查脚
 msgid "Unsaved changes. Click Save to apply."
 msgstr "修改尚未保存，请点击“保存”应用。"
 
+msgid "Reload stored settings"
+msgstr "重新读取已存储的设置"
+
+msgid "Changes were written, but readback could not be confirmed. Reload the page before retrying."
+msgstr "已执行写入，但回读确认失败。请重新读取已存储的设置，再决定是否重试。"
+
 msgid "The request timed out. Changes may already be saved. Reload the page to check before retrying."
 msgstr "请求超时，部分修改可能已经保存。请先刷新页面核对，再决定是否重试。"
 
