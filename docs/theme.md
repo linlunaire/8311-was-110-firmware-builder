@@ -38,6 +38,8 @@ Hook 编辑器显示标题、文件名和等宽代码，长行横向滚动，操
 目标原生模板渲染、浏览器模拟端点、构建和实机部署是不同的验证阶段。
 
 可读主题源码位于 `tools/theme/8311-theme.css` 和 `tools/theme/8311-theme.js`。
+管理页面脚本的可读源码为 `tools/theme/8311-view.js`，生成到原有 `resources/view/8311.js`
+路径，保留模板调用的全局函数名；构建流程同时检查这三项压缩资源。
 修改后执行 `npm ci --prefix tools/theme --ignore-scripts`，再运行 `npm run build --prefix tools/theme`
 生成固件内的压缩资源；`npm run check --prefix tools/theme` 检查生成文件是否一致。
 压缩器版本和依赖由 lockfile 固定，版权声明原样保留，压缩工具只在开发环境运行。
