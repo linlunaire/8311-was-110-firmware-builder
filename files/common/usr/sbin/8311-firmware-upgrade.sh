@@ -145,11 +145,13 @@ inactive_fwbank() {
 
 fwenv_set() {
 	[ -n "$1" ] || return 1
+	local VALUE
 
 	for i in 0 1; do
 		fw_setenv "$1" "$2" || return $?
 	done
-	[ "$(fw_printenv -n "$1" 2>/dev/null)" = "$2" ]
+	VALUE=$(fw_printenv -n "$1" 2>/dev/null) || return 1
+	[ "$VALUE" = "$2" ]
 }
 
 prepare_volume() {
@@ -298,7 +300,8 @@ LOCK="/tmp/8311-firmware-upgrade.lock"
 
 	INSTALL_BANK=$(inactive_fwbank) || _err "Cannot determine the active firmware bank."
 	case "$INSTALL_BANK" in A|B) ;; *) _err "Invalid inactive firmware bank." ;; esac
-	[ "$(fw_printenv -n commit_bank 2>/dev/null)" = "$(active_fwbank)" ] ||
+	DEFAULT_BANK=$(fw_printenv -n commit_bank 2>/dev/null) || _err "Cannot read the default firmware bank."
+	[ "$DEFAULT_BANK" = "$(active_fwbank)" ] ||
 		_err "Confirm or leave the current trial before installing another firmware."
 	# Resolve every target once and reject missing/undersized volumes before writes.
 	KERNEL_UBI=$(prepare_volume "kernel$INSTALL_BANK" "$SIZE_KERNEL") || exit 1

@@ -8,6 +8,17 @@ from test_regressions import ROOT, ShellFixture, shell_path
 
 
 class HelperTests(ShellFixture):
+    def test_failed_environment_reader_discards_partial_values(self):
+        script = self.script("files/common/usr/sbin/fwenv_get")
+        self.command("fw_printenv", 'printf "%s" "$VALUE"; exit 7')
+        for encoded in (False, True):
+            self.env["VALUE"] = "Qg==" if encoded else "B"
+            for default in ("", "fallback"):
+                with self.subTest(encoded=encoded, default=default):
+                    result = self.run_script(script, *(["--base64"] if encoded else []), "--", "test", default)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(result.stdout, default + "\n" if default else "")
+
     def source_and_run(self, path, body):
         runner = self.root / "run-helper.sh"
         runner.write_text('. ' + shlex.quote(shell_path(path)) + '\n' + body, newline="\n")

@@ -239,6 +239,17 @@ printf '%s' "$2" > "$FIXTURE/env/$1"
         self.assert_clean_stage()
         self.assertTrue((self.root / "tmp/8311-firmware-upgrade.lock").exists())
 
+    def test_failed_boot_environment_reads_stop_before_component_writes(self):
+        self.command("fw_printenv", 'cat "$FIXTURE/env/$2" 2>/dev/null; [ "$2" != "$READ_FAIL_KEY" ] || exit 7')
+        for key in ("commit_bank", "img_validB"):
+            with self.subTest(key=key):
+                self.env["READ_FAIL_KEY"] = key
+                self.ops.unlink(missing_ok=True)
+                result = self.run_script(self.upgrade, "--install", "--yes", "--no-commit", self.archive())
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(any(item.startswith("write:") for item in self.operations()))
+                self.assert_clean_stage()
+
     def test_install_from_bank_b_targets_bank_a(self):
         (self.root / "proc/cmdline").write_text("rootfsname=rootfsB\n")
         (self.root / "env/commit_bank").write_text("B")
@@ -609,6 +620,25 @@ printf '%s\n' '8311_reg_id_hex=736563726574' '8311_lpwd=secret-password' '8311_g
         self.assertIn("private-omci", files["support/omci_pipe_mda.txt"])
         self.assertIn("secret-password", files["support/system_log.txt"])
 
+    def test_real_tc_dump_failure_never_publishes_partial_raw_support(self):
+        dump = self.script("files/common/usr/sbin/8311-tc-filter-dump.sh")
+        shutil.copyfile(dump, self.bin / "8311-tc-filter-dump.sh")
+        self.command("ip", 'echo "1: eth0_0: <UP>"; [ "${QUERY_FAIL:-}" != ip ] || exit 7')
+        self.command("tc", 'echo "filter fixture"; [ "${QUERY_FAIL:-}" != tc ] || exit 7')
+        for command in ("ip", "tc"):
+            with self.subTest(command=command):
+                self.env["QUERY_FAIL"] = command
+                result = self.run_script(self.support, "--raw")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.root / "tmp/support.tar.gz").exists())
+        del self.env["QUERY_FAIL"]
+        result = self.run_script(self.support, "--raw")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("filter fixture", self.contents()["support/tc_filters.txt"])
+        self.command("ip", "exit 0")
+        self.assertEqual(self.run_script(self.support, "--raw").returncode, 0)
+        self.assertEqual(self.contents()["support/tc_filters.txt"], "")
+
     def test_deletion_uses_the_same_generation_lock(self):
         archive = self.root / "tmp/support.tar.gz"
         archive.write_bytes(b"fixture")
@@ -963,6 +993,29 @@ if [ -f "$FIXTURE/live-rules" ]; then printf '%064d\\n' 1; else printf '%064d\\n
         ops = self.run_daemon()
         self.assertEqual(ops.count("fix"), 1)
         self.assertEqual(ops.count("detect"), 4)
+        self.assertEqual([x for x in ops if x.startswith("sleep:")], ["sleep:5"] * 4)
+        fields = (self.root / "tmp/8311-vlans.status").read_text().strip().split("\t")
+        self.assertEqual(fields[4:], ["applied", "none", "0"])
+
+    def test_real_detector_failure_is_retried_without_applying_partial_state(self):
+        from test_topology import staged_scripts
+        staged = staged_scripts(self)
+        detector = self.script(staged / "8311-detect-config.sh", True)
+        shutil.copy2(detector, self.root / "usr/sbin/8311-detect-config.sh")
+        self.command("brctl", "printf 'bridge fixture\\n'")
+        self.command("ip", '''
+cycle=$(cat "$FIXTURE/cycle" 2>/dev/null || echo 0)
+printf 'link fixture\\n'
+[ "$cycle" -ge "${FAIL_CYCLES:-99}" ]
+''')
+        self.assertNotIn("fix", self.run_daemon())
+        fields = (self.root / "tmp/8311-vlans.status").read_text().strip().split("\t")
+        self.assertEqual(fields[4:6], ["error", "detect"])
+        for name in ("operations", "cycle"):
+            (self.root / name).unlink()
+        self.env["FAIL_CYCLES"] = "1"
+        ops = self.run_daemon()
+        self.assertEqual(ops.count("fix"), 1)
         self.assertEqual([x for x in ops if x.startswith("sleep:")], ["sleep:5"] * 4)
         fields = (self.root / "tmp/8311-vlans.status").read_text().strip().split("\t")
         self.assertEqual(fields[4:], ["applied", "none", "0"])

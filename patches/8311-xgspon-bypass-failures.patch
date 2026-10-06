@@ -1,0 +1,61 @@
+--- a/usr/sbin/8311-detect-config.sh
++++ b/usr/sbin/8311-detect-config.sh
+@@ -54,17 +54,29 @@
+ KNOWN_SERVICES_PMAPPERS="57603"
+ 
+ 
+-hash_state() {
+-    {
+-        ip li
+-        brctl show
+-        for BRPORT_STATE in $(find /sys/devices/virtual/net/sw*/lower_*/brport/state 2>/dev/null); do
+-             echo "$BRPORT_STATE: $(cat "$BRPORT_STATE")"
+-        done
+-    } | sha256sum | awk '{print $1}'
+-}
+-
+-STATE_HASH=$(hash_state)
++# Keep producer statuses separate: a failed query is not an empty topology.
++hash_state() (
++    umask 077
++    SNAPSHOT=$(mktemp /tmp/8311-topology.XXXXXX) || exit 1
++    trap 'rm -f "$SNAPSHOT"' 0
++    trap 'exit 1' HUP INT TERM
++    ip li > "$SNAPSHOT" || exit 1
++    brctl show >> "$SNAPSHOT" || exit 1
++    for BRPORT_STATE in /sys/devices/virtual/net/sw*/lower_*/brport/state; do
++        # No bridge ports is a valid state; an existing unreadable port is not.
++        [ -e "$BRPORT_STATE" ] || continue
++        VALUE=$(cat "$BRPORT_STATE") || exit 1
++        printf '%s: %s\n' "$BRPORT_STATE" "$VALUE" >> "$SNAPSHOT" || exit 1
++    done
++    HASH=$(sha256sum < "$SNAPSHOT") || exit 1
++    DIGEST=${HASH%% *}
++    case "$DIGEST" in ''|*[!0-9a-f]*) exit 1 ;; esac
++    [ "${#DIGEST}" -eq 64 ] || exit 1
++    case "$HASH" in "$DIGEST  -"|"$DIGEST *-") ;; *) exit 1 ;; esac
++    printf '%s\n' "$DIGEST"
++)
++
++STATE_HASH=$(hash_state) || exit 1
+ if [ "$HASH_ONLY" -eq 1 ]; then
+     echo "$STATE_HASH"
+     exit 0
+--- a/usr/sbin/8311-fix-vlans.sh
++++ b/usr/sbin/8311-fix-vlans.sh
+@@ -31,13 +31,13 @@
+ 	exit 69
+ fi
+ 
+-NEW_STATE_HASH=$("$DETECT_CONFIG" -H)
++NEW_STATE_HASH=$("$DETECT_CONFIG" -H) || exit 1
+ 
+ CONFIG_RESET=0
+ if [ ! -f "$CONFIG_FILE" ] || [ "$NEW_STATE_HASH" != "$STATE_HASH" ]; then
+     echo "Config file '$CONFIG_FILE' does not exist or state changed, detecting configuration..."
+ 
+-    "$DETECT_CONFIG" -c "$CONFIG_FILE" > /dev/null
++    "$DETECT_CONFIG" -c "$CONFIG_FILE" > /dev/null || exit 1
+     if [ ! -f "$CONFIG_FILE" ]; then
+         echo "Error: Unable to detect configuration." >&2
+         exit 1

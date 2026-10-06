@@ -2,6 +2,7 @@
 # Read-only checks for WAS-110 legacy uImages and its SquashFS root filesystem.
 # A successful check is a prerequisite for a trial boot, not a boot guarantee.
 set -e
+. /lib/8311-limits.sh || exit 1
 QUICK=false
 if [ "${1-}" = --quick ]; then QUICK=true; shift; fi
 case "${1-}" in A|B) [ "$#" -eq 1 ] || exit 2; BANK=$1 ;; *) exit 2 ;; esac
@@ -18,7 +19,10 @@ fail() { printf '%s\n' "$1" >&2; exit 1; }
 hex() { hexdump -v -s "$1" -n "$2" -e '1/1 "%02x"' "$WORK/header"; }
 
 # A failed installer deliberately leaves this false even if old headers remain.
-if [ "$(fw_printenv -n "img_valid$BANK" 2>/dev/null)" = false ]; then fail incomplete-bank; fi
+# Only a successful full read can establish that a legacy marker is absent.
+capture "$WORK/environment" 1048576 3 fw_printenv || fail unreadable-boot-environment
+VALID=$(awk -F= -v key="img_valid$BANK" '$1 == key {print substr($0, length(key)+2)}' "$WORK/environment")
+case "$VALID" in false) fail incomplete-bank ;; true|'') ;; *) fail invalid-bank-marker ;; esac
 
 for part in kernel bootcore rootfs; do
 	INFO=$(ubinfo /dev/ubi0 -N "$part$BANK" 2>/dev/null) || fail "missing-$part"
@@ -55,7 +59,8 @@ for part in kernel bootcore rootfs; do
 		$QUICK && continue
 		tail -c +65 "$VOLUME" | head -c "$SIZE" > "$WORK/data"
 		[ "$(wc -c < "$WORK/data")" -eq "$SIZE" ] || fail "incomplete-$part"
-		[ "$(crc32 "$WORK/data" | awk '{print $1}')" = "$(hex 24 4)" ] || fail "corrupt-$part"
+		DATA_CRC=$(crc32 < "$WORK/data") || fail "unreadable-$part-crc"
+		[ "$DATA_CRC" = "$(hex 24 4)" ] || fail "corrupt-$part"
 	fi
 done
 printf 'ready\n'

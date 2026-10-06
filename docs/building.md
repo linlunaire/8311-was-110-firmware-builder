@@ -8,7 +8,7 @@ git submodule update --init
 
 ## 基于发布底包构建
 
-适用于 basic 变体的脚本和 WebUI 更新。需要 Python 3、Git、GNU coreutils、squashfs-tools 和 7z。
+适用于 basic 变体的脚本和 WebUI 更新。需要 Python 3、Git、GNU coreutils、patch、squashfs-tools 和 7z。
 
 从 [上游 v2.8.3](https://github.com/djGrrr/8311-was-110-firmware-builder/releases/tag/v2.8.3) 的 basic 归档提取 `local-upgrade.tar`，保存到下面指定的路径：
 
@@ -20,6 +20,10 @@ sudo python3 tools/build_from_release.py \
 
 构建器核对固定底包哈希，保留内核、驱动和固件二进制，叠加已提交的源码并编译翻译。打包后重新解包核对文件内容、权限和链接。工作区必须干净，输出目录必须尚不存在。
 
+两种构建方式都对复制进镜像的固定 VLAN 子模块脚本应用
+`patches/8311-xgspon-bypass-failures.patch`，补齐检测错误传播。子模块源码保持不变；
+补丁不匹配时停止构建，升级子模块后应重新检查补丁与 `tests/test_topology.py`。
+
 输出包含升级包、组件、`SHA256SUMS` 和 `build-manifest.json`。后者记录源码提交及底包来源。
 
 ```sh
@@ -28,7 +32,7 @@ sudo python3 tools/build_from_release.py \
 
 ## 使用原厂镜像构建
 
-需要 Bash、GNU 工具、Python 3、Perl、sudo、squashfs-tools、u-boot-tools 和 mtd-utils。生成 `--release` 归档还需要 7z。
+需要 Bash、GNU 工具（含 patch）、Python 3、Perl、sudo、squashfs-tools、u-boot-tools 和 mtd-utils。生成 `--release` 归档还需要 7z。
 
 准备 BFW 原厂升级镜像，以及 basic 原厂的 `bootcore.bin`、`kernel.bin`、`rootfs.img`：
 
@@ -46,7 +50,10 @@ sudo python3 tools/build_from_release.py \
 ## 测试
 
 ```sh
-sudo apt-get install lua5.1 pcre2-utils busybox
+sudo apt-get install lua5.1 pcre2-utils busybox patch python3-venv
+python3 -m venv .test-tmp/venv
+. .test-tmp/venv/bin/activate
+python3 -m pip install --only-binary=:all: --no-deps lupa==2.6
 python3 -m unittest discover -s tests -v
 TEST_SHELL=busybox TEST_SHELL_ARGS=sh python3 -m unittest discover -s tests -v
 node tests/status_poll_smoke.cjs

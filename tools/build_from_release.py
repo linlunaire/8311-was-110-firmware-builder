@@ -92,7 +92,7 @@ def build(base, output, version):
     validate_base(base)
     if os.name != "posix" or os.geteuid() != 0:
         raise ValueError("Run in a Linux checkout as root to preserve firmware ownership and device nodes")
-    for tool in ("unsquashfs", "mksquashfs", "cp", "git"):
+    for tool in ("unsquashfs", "mksquashfs", "cp", "git", "patch"):
         if not shutil.which(tool):
             raise ValueError("Missing build tool: " + tool)
     if output.exists():
@@ -121,6 +121,8 @@ def build(base, output, version):
         for name, folder in (("8311-detect-config.sh", "usr/sbin"),
                              ("8311-fix-vlans.sh", "usr/sbin"), ("8311-vlans-lib.sh", "lib")):
             run("cp", "-a", ROOT / "8311-xgspon-bypass" / name, root / folder / name)
+        run("patch", "--batch", "--forward", "--fuzz=0", "-p1", "-d", root,
+            "-i", ROOT / "patches/8311-xgspon-bypass-failures.patch")
         for po in sorted((ROOT / "i18n/po").glob("*.po")):
             if not po.name.endswith(".en.po"):
                 run("python3", ROOT / "tools/po2lmo.py", po, root / "usr/lib/lua/luci/i18n" / (po.stem + ".lmo"))

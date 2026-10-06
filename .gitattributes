@@ -5,6 +5,8 @@
 *.cjs text eol=lf
 *.py text eol=lf
 *.yml text eol=lf
+# Unified diffs preserve the indentation and blank context lines they patch.
+*.patch text eol=lf -whitespace
 files/common/usr/sbin/fwenv_get text eol=lf
 files/common/usr/sbin/fwenv_set text eol=lf
 files/common/usr/sbin/alternate_firmware_info text eol=lf

@@ -1,5 +1,6 @@
 """Image and boot-selection regressions; all block devices and writes are fixtures."""
 import shlex
+import shutil
 import struct
 import sys
 import time
@@ -12,9 +13,14 @@ class BankCheckTests(ShellFixture):
     def setUp(self):
         super().setUp()
         self.check = self.script("files/common/usr/sbin/8311-bank-check.sh", True)
+        self.limits()
         (self.root / "dev").mkdir()
         (self.root / "proc").mkdir()
-        self.command("fw_printenv", 'printf "%s" "${BANK_VALID:-true}"')
+        self.command("fw_printenv", '''
+if [ "$#" -gt 0 ]; then printf '%s' "${BANK_VALID:-true}"; else
+    printf 'img_validA=%s\\nimg_validB=%s\\n' "${BANK_VALID:-true}" "${BANK_VALID:-true}"
+fi
+''')
         (self.root / "proc/mtd").write_text('mtd9: 00001000 00000100 "rootfsA"\n'
                                             'mtd13: 00001000 00000100 "rootfsB"\n')
         self.command("ubinfo", '''
@@ -104,11 +110,43 @@ printf executable > "$6/bin/busybox"
         self.assertNotEqual(self.run_script(self.check, "B").returncode, 0)
         self.assertEqual(self.operations(), [])
 
+    def test_failed_payload_crc_never_reports_a_ready_bank(self):
+        helper = self.root / "binary_tools.py"
+        helper.write_text(helper.read_text() +
+                          '\nif kind == "crc32" and data.startswith(b"kernel payload"): sys.exit(7)\n',
+                          encoding="utf-8", newline="\n")
+        result = self.run_script(self.check, "B")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("ready", result.stdout)
+        self.assertEqual(self.operations(), [])
+        self.assertEqual(list((self.root / "tmp").glob("8311-bank-check.*")), [])
+
+    def test_failed_marker_read_is_distinct_from_absent_legacy_marker(self):
+        for output in ("", "img_validB=true"):
+            with self.subTest(output=output):
+                self.command("fw_printenv", f"printf '%s' '{output}'; exit 7")
+                result = self.run_script(self.check, "B")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.operations(), [])
+                self.assertEqual(list((self.root / "tmp").glob("8311-bank-check.*")), [])
+        self.command("fw_printenv", "exit 0")
+        self.assertEqual(self.run_script(self.check, "B").stdout, "ready\n")
+
+    def test_crc_diagnostic_suffix_is_not_a_valid_checksum(self):
+        helper = self.root / "binary_tools.py"
+        helper.write_text(helper.read_text().replace("print('%08x' % zlib.crc32(data))",
+            "print('%08x%s' % (zlib.crc32(data), ' diagnostic' if data.startswith(b'kernel payload') else ''))"),
+            encoding="utf-8", newline="\n")
+        result = self.run_script(self.check, "B")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("ready", result.stdout)
+
 
 class BankControlTests(ShellFixture):
     def setUp(self):
         super().setUp()
         self.control = self.script("files/common/usr/sbin/8311-bankctl.sh", True)
+        self.limits()
         # BusyBox ash can implement sleep internally. Resolve both timer and
         # destructive reboot explicitly to fixtures, even after fixture cleanup.
         self.control.write_text(self.control.read_text().replace("\n", '''
@@ -120,6 +158,12 @@ reboot() { "$TEST_BIN/reboot" "$@"; }
         (self.root / "proc/cmdline").write_text("rootfsname=rootfsA\n")
         (self.root / "env/commit_bank").write_text("A")
         self.command("fwenv_get", 'cat "$FIXTURE/env/$1" 2>/dev/null')
+        self.command("fw_printenv", '''
+for field in "$FIXTURE/env/"*; do
+    [ -f "$field" ] || continue
+    printf '%s=%s\\n' "${field##*/}" "$(cat "$field")"
+done
+''')
         self.command("fwenv_set", '''
 [ "$1" = -- ] || exit 99
 echo "env:$2:$3" >> "$OPS"
@@ -176,6 +220,37 @@ printf '%s' "$3" > "$FIXTURE/env/$2"
         self.env["INVALID_BANK"] = "B"
         self.assertNotEqual(self.run_script(self.control, "reboot").returncode, 0)
         self.assertEqual(self.operations(), [])
+
+    def test_failed_readback_after_boot_selection_never_schedules_reboot(self):
+        self.command("fwenv_get", '''
+cat "$FIXTURE/env/$1" 2>/dev/null || exit 1
+[ "$1" != img_validB ]
+''')
+        result = self.run_script(self.control, "trial", "B")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.operations(), ["env:img_validB:true"])
+        self.assertFalse((self.root / "rebooted").exists())
+
+    def test_failed_activation_read_never_becomes_an_absent_trial(self):
+        getter = self.script("files/common/usr/sbin/fwenv_get")
+        shutil.copy2(getter, self.bin / "fwenv_get")
+        (self.root / "env/img_activate").write_text("B")
+        self.env["INVALID_BANK"] = "B"
+        self.command("fw_printenv", '''
+if [ "$#" -gt 0 ]; then
+    cat "$FIXTURE/env/$3" || exit 1
+    [ "$3" != img_activate ]
+else
+    printf 'commit_bank=A\\nimg_activate=B\\n'
+    exit 7
+fi
+''')
+        for action in ("commit", "reboot"):
+            with self.subTest(action=action):
+                result = self.run_script(self.control, action)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.operations(), [])
+                self.assertFalse((self.root / "rebooted").exists())
 
 
 class VlanRuleHashTests(ShellFixture):
