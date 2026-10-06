@@ -29,7 +29,10 @@ local translate = i18n.translate
 
 	<form id="support-form" method="post" action="<%=url('admin', '8311', 'support')%>" enctype="multipart/form-data">
 		<input type="hidden" name="token" value="<%=token%>" />
-		<label><input type="checkbox" name="include_raw" value="1" /> <%:Include raw diagnostics (contains credentials and identifiers)%></label>
+		<label class="support-raw-option">
+			<input type="checkbox" name="include_raw" value="1" />
+			<span><%:Include raw diagnostics (contains credentials and identifiers)%></span>
+		</label>
 		<div id="zone-content-wrapper">
 			<div id="zone-content">
 <% if support_output ~= '' then %>

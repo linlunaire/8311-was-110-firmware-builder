@@ -594,6 +594,12 @@ msgstr "在生成支持存档之前，连接光纤至少30秒。"
 msgid "WARNING: A support archive contains potentially sensitive information. Do not share it publically."
 msgstr "警告：支持存档包含潜在的敏感信息，请勿公开分享。"
 
+msgid "By default, environment values are redacted and raw logs, pontop, TC and OMCI dumps are omitted."
+msgstr "默认隐藏环境变量值，并省略原始日志及 pontop、TC 和 OMCI 转储。"
+
+msgid "Include raw diagnostics (contains credentials and identifiers)"
+msgstr "包含原始诊断信息（含凭据和设备标识）"
+
 msgid "Generate Support Archive"
 msgstr "生成支持存档"
 

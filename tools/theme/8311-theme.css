@@ -134,6 +134,9 @@
 .luci-8311 input, .luci-8311 select, .luci-8311 textarea, .luci-8311 .cbi-dropdown { color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; box-shadow: none; max-width: 100%; font-family: inherit; }
 .luci-8311 input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), .luci-8311 select { min-height: 36px; padding: 6px 10px; }
 .luci-8311 input[type="checkbox"], .luci-8311 input[type="radio"] { accent-color: var(--accent); }
+.luci-8311 .support-raw-option { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0 16px; font: inherit; line-height: 1.5; cursor: pointer; }
+.luci-8311 .support-raw-option > input { flex: 0 0 auto; width: 1em; height: 1em; margin: .25em 0 0; font: inherit; }
+.luci-8311 .support-raw-option > span { min-width: 0; overflow-wrap: anywhere; }
 .luci-8311 .cbi-dropdown[open] > ul.dropdown { background: var(--surface); border-color: var(--line); box-shadow: none; }
 .luci-8311 .cbi-dropdown:not(.btn):not(.cbi-button) > ul > li, .luci-8311 .cbi-dropdown > ul.dropdown > li { color: var(--text); }
 .luci-8311 .cbi-dropdown[open] > ul.dropdown > li[selected], .luci-8311 .cbi-dropdown[open] > ul.dropdown > li.focus { background: var(--selected); }
