@@ -17,6 +17,12 @@ trap cleanup 0
 trap 'exit 1' HUP INT TERM
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 hex() { hexdump -v -s "$1" -n "$2" -e '1/1 "%02x"' "$WORK/header"; }
+read_payload() {
+	# Use one input descriptor so skipping the header cannot overread a block.
+	{ dd bs=64 count=1 of=/dev/null 2>/dev/null || return 1
+	  head -c "$2"
+	} < "$1"
+}
 
 # A failed installer deliberately leaves this false even if old headers remain.
 # Only a successful full read can establish that a legacy marker is absent.
@@ -57,9 +63,7 @@ for part in kernel bootcore rootfs; do
 		HEADER_CRC=$({ head -c 4 "$WORK/header"; printf '\000\000\000\000'; tail -c +9 "$WORK/header"; } | crc32)
 		[ "$HEADER_CRC" = "$(hex 4 4)" ] || fail "corrupt-$part-header"
 		$QUICK && continue
-		tail -c +65 "$VOLUME" | head -c "$SIZE" > "$WORK/data"
-		[ "$(wc -c < "$WORK/data")" -eq "$SIZE" ] || fail "incomplete-$part"
-		DATA_CRC=$(crc32 < "$WORK/data") || fail "unreadable-$part-crc"
+		DATA_CRC=$(stream_digest "$WORK" crc32 "$SIZE" read_payload "$VOLUME" "$SIZE") || fail "unreadable-$part-crc"
 		[ "$DATA_CRC" = "$(hex 24 4)" ] || fail "corrupt-$part"
 	fi
 done

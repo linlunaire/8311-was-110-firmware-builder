@@ -113,6 +113,21 @@ class ShellFixture(unittest.TestCase):
         self.command("8311-temp-space.sh", '[ "${SPACE_FAIL:-0}" = 0 ]')
         with (self.root / "lib/8311-limits.sh").open("a") as file:
             file.write('\nrequire_tmp_space() { [ "${SPACE_FAIL:-0}" = 0 ]; }\n')
+            if os.name == "nt":
+                # Native Windows Python cannot inherit an MSYS FIFO. Linux CI
+                # runs the real shared helper, including the byte counter.
+                file.write('''
+stream_digest() {
+    local directory="$1" algorithm="$2" expected="$3" result code=0
+    shift 3
+    "$@" > "$directory/stream" || { rm -f "$directory/stream"; return 1; }
+    [ "$(wc -c < "$directory/stream")" -eq "$expected" ] || code=1
+    result=$("$algorithm" < "$directory/stream") || code=1
+    rm -f "$directory/stream"
+    [ "$code" -eq 0 ] || return 1
+    printf '%s\\n' "$result"
+}
+''')
 
     def binary_tools(self):
         helper = self.root / "binary_tools.py"
@@ -150,21 +165,6 @@ class UpgradeTests(ShellFixture):
         self.upgrade = self.script("files/common/usr/sbin/8311-firmware-upgrade.sh", True)
         self.limits()
         self.binary_tools()
-        if os.name == "nt":
-            # A native Windows Python CRC helper cannot inherit an MSYS FIFO.
-            # Preserve both statuses with a file adapter; Linux exercises FIFO.
-            source = self.upgrade.read_text()
-            adapter = '''stream_digest() {
-    local algorithm="$1"; shift
-    "$@" > "$WORKDIR/stream" || { rm -f "$WORKDIR/stream"; return 1; }
-    "$algorithm" < "$WORKDIR/stream"
-    local code=$?
-    rm -f "$WORKDIR/stream"
-    return "$code"
-}
-'''
-            self.upgrade.write_text(source.replace("# Keep the lock inode in place;", adapter + "\n# Keep the lock inode in place;"),
-                                    encoding="utf-8", newline="\n")
         (self.root / "dev").mkdir()
         (self.root / "proc").mkdir()
         (self.root / "proc/cmdline").write_text("console=ttyS0 rootfsname=rootfsA\n")
@@ -926,6 +926,7 @@ class VlanDaemonTests(ShellFixture):
                                encoding="utf-8", newline="\n")
         for directory in ("lib", "usr/sbin", "ptconf/8311", "sys/devices/virtual/net/gem-omci"):
             (self.root / directory).mkdir(parents=True)
+        self.limits()
         (self.root / "mode").write_text("1\n")
         (self.root / "lib/8311.sh").write_text('''
 fwenv_get_8311() { cat "$FIXTURE/mode"; }
@@ -994,6 +995,92 @@ if [ -f "$FIXTURE/live-rules" ]; then printf '%064d\\n' 1; else printf '%064d\\n
         self.assertEqual(ops.count("fix"), 1)
         self.assertEqual(ops.count("detect"), 4)
         self.assertEqual([x for x in ops if x.startswith("sleep:")], ["sleep:5"] * 4)
+        fields = (self.root / "tmp/8311-vlans.status").read_text().strip().split("\t")
+        self.assertEqual(fields[4:], ["applied", "none", "0"])
+
+    def test_oversized_apply_output_is_rejected_then_retried(self):
+        fixer = self.root / "usr/sbin/8311-fix-vlans.sh"
+        fixer.write_text(fixer.read_text().replace('echo fix >> "$OPS"', '''
+if [ ! -f "$FIXTURE/large-output-seen" ]; then
+    touch "$FIXTURE/large-output-seen"
+    head -c 2097152 /dev/zero
+    exit 0
+fi
+echo fix >> "$OPS"
+'''), newline="\n")
+        sleep = self.bin / "sleep"
+        sleep.write_text(sleep.read_text().replace('if [ "$cycle" = 1 ]; then', '''
+if [ "$cycle" = 1 ]; then
+    cp "$FIXTURE/tmp/8311-vlans.status" "$FIXTURE/first-status"
+    for file in "$FIXTURE"/tmp/8311-vlans.*; do
+        [ -f "$file" ] || continue
+        wc -c < "$file" >> "$FIXTURE/first-sizes"
+    done
+'''), newline="\n")
+        ops = self.run_daemon()
+        first = (self.root / "first-status").read_text().strip().split("\t")
+        self.assertEqual(first[2], "0")
+        self.assertEqual(first[4:6], ["error", "apply"])
+        self.assertLessEqual(max(map(int, (self.root / "first-sizes").read_text().split())), 1048576)
+        self.assertEqual(ops.count("fix"), 1)
+        final = (self.root / "tmp/8311-vlans.status").read_text().strip().split("\t")
+        self.assertEqual(final[4:], ["applied", "none", "0"])
+
+    def test_excessive_stderr_is_also_rejected(self):
+        detector = self.root / "usr/sbin/8311-detect-config.sh"
+        detector.write_text('#!/bin/sh\nhead -c 2097152 /dev/zero >&2\nprintf "%064d\\n" 1\n', newline="\n")
+        self.env["MAX_CYCLES"] = "1"
+        self.assertNotIn("fix", self.run_daemon())
+        fields = (self.root / "tmp/8311-vlans.status").read_text().strip().split("\t")
+        self.assertEqual(fields[4:6], ["error", "detect"])
+
+    @unittest.skipUnless(sys.platform == "linux", "Requires the kernel file size limit")
+    def test_detector_side_files_inherit_the_size_limit(self):
+        detector = self.root / "usr/sbin/8311-detect-config.sh"
+        detector.write_text('''#!/bin/sh
+head -c 2097152 /dev/zero > "$FIXTURE/tmp/detector-side-file" || exit 7
+printf '%064d\\n' 1
+''', newline="\n")
+        self.env["MAX_CYCLES"] = "1"
+        self.assertNotIn("fix", self.run_daemon())
+        self.assertLessEqual((self.root / "tmp/detector-side-file").stat().st_size, 1048576)
+        fields = (self.root / "tmp/8311-vlans.status").read_text().strip().split("\t")
+        self.assertEqual(fields[4:6], ["error", "detect"])
+
+    @unittest.skipUnless(sys.platform == "linux", "Requires real Linux flock and timeout")
+    def test_timeout_descendants_preserve_exclusion_and_allow_later_recovery(self):
+        import fcntl
+        (self.bin / "flock").unlink()
+        timeout = [shutil.which("busybox"), "timeout"] if os.environ.get("TEST_SHELL") == "busybox" else [shutil.which("timeout")]
+        native = " ".join(map(shlex.quote, timeout))
+        self.command("timeout", 'if [ "$2" = 5 ]; then shift 3; exec ' + native + ' -k 1 1 "$@"; fi\nexec ' + native + ' "$@"')
+        fixer = self.root / "usr/sbin/8311-fix-vlans.sh"
+        fixer.write_text('''#!/bin/sh
+echo entered >> "$OPS"
+/bin/sleep 3 & wait
+''', newline="\n")
+        self.env["MAX_CYCLES"] = "1"
+        self.run_daemon()
+        with (self.root / "tmp/8311-fix-vlans.lock").open("a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                # A BusyBox timeout may leave a descendant alive. It must keep
+                # the lock until exiting, so a second monitor cannot overlap.
+                before = self.operations().count("entered")
+                self.run_daemon()
+                self.assertEqual(self.operations().count("entered"), before)
+                deadline = time.monotonic() + 4
+                while True:
+                    try:
+                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        self.assertLess(time.monotonic(), deadline)
+                        time.sleep(0.02)
+        fixer.write_text('#!/bin/sh\necho recovered >> "$OPS"\n', newline="\n")
+        self.run_daemon()
+        self.assertEqual(self.operations().count("recovered"), 1)
         fields = (self.root / "tmp/8311-vlans.status").read_text().strip().split("\t")
         self.assertEqual(fields[4:], ["applied", "none", "0"])
 

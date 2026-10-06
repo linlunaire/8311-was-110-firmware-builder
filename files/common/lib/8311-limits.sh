@@ -1,19 +1,23 @@
 #!/bin/sh
 # Bound query/extraction output without hiding the command's exit status.
 # BusyBox ash and dash use 512-byte blocks; bash uses 1024-byte blocks.
-bounded_run() {
-	local bytes="$1" seconds="$2" unit=512
-	shift 2
+bounded_exec() {
+	local bytes="$1" unit=512
+	shift
 	[ -z "${BASH_VERSION:-}" ] || unit=1024
 	( ulimit -c 0 || exit 126
 	  ulimit -f "$(( (bytes + unit - 1) / unit ))" || exit 126
-	  exec timeout -k 1 "$seconds" "$@" )
+	  exec "$@" )
 }
 
-capture() {
-	local file="$1" bytes="$2" seconds="$3" code=0
-	shift 3
-	bounded_run "$bytes" "$seconds" "$@" > "$file" 2>/dev/null || code=$?
+bounded_run() {
+	local bytes="$1" seconds="$2"
+	shift 2
+	bounded_exec "$bytes" timeout -k 1 "$seconds" "$@"
+}
+
+capture_result() {
+	local file="$1" bytes="$2" code="$3"
 	local size
 	size=$(wc -c < "$file") || return 1
 	if [ "$size" -gt "$bytes" ] || { [ "$code" -ne 0 ] && [ "$size" -ge "$bytes" ]; }; then
@@ -28,6 +32,61 @@ capture() {
 	rm -f "$file"
 	return "$code"
 }
+
+capture() {
+	local file="$1" bytes="$2" seconds="$3" code=0
+	shift 3
+	bounded_run "$bytes" "$seconds" "$@" > "$file" 2>/dev/null || code=$?
+	capture_result "$file" "$bytes" "$code"
+}
+
+# The caller supplies timeout and its grace period. Both output streams and
+# regular files written by descendants inherit the same per-file size limit.
+capture_combined() {
+	local file="$1" bytes="$2" code=0
+	shift 2
+	bounded_exec "$bytes" "$@" > "$file" 2>&1 || code=$?
+	capture_result "$file" "$bytes" "$code"
+}
+
+# Hash and count the same byte stream. Keep every producer/consumer status;
+# only tiny result files are staged, never a complete component payload.
+stream_digest() (
+	local directory="$1" algorithm="$2" expected="$3" work code=0
+	local reader= hasher= counter= copier= size
+	shift 3
+	work=$(mktemp -d "$directory/digest.XXXXXX") || exit 1
+	cleanup_stream() {
+		local child
+		# These private read-only workers may still be blocked opening a FIFO.
+		for child in "$copier" "$reader" "$hasher" "$counter"; do
+			[ -z "$child" ] || kill -KILL "$child" 2>/dev/null || true
+		done
+		wait 2>/dev/null || true
+		rm -rf "$work"
+	}
+	trap cleanup_stream 0
+	trap 'exit 1' HUP INT TERM
+	mkfifo "$work/input" "$work/hash" "$work/count" || exit 1
+	"$algorithm" < "$work/hash" > "$work/value" &
+	hasher=$!
+	wc -c < "$work/count" > "$work/size" &
+	counter=$!
+	"$@" > "$work/input" &
+	reader=$!
+	tee "$work/hash" < "$work/input" > "$work/count" &
+	copier=$!
+	# wait is interruptible by our traps; a failed copier may not have opened
+	# every FIFO, so cancel its peers before waiting for their completion.
+	wait "$copier" || { copier=; exit 1; }; copier=
+	wait "$reader" || code=1; reader=
+	wait "$hasher" || code=1; hasher=
+	wait "$counter" || code=1; counter=
+	[ "$code" -eq 0 ] || exit 1
+	IFS= read -r size < "$work/size" || exit 1
+	[ "$size" -eq "$expected" ] || exit 1
+	cat "$work/value"
+)
 
 # /tmp on the target reports zero filesystem blocks: also budget available RAM.
 require_tmp_space() {

@@ -1,6 +1,7 @@
 #!/bin/sh
 
 _lib_8311 2>/dev/null || . /lib/8311.sh
+. /lib/8311-limits.sh || exit 1
 
 # Repeated init calls must not start competing monitors.
 exec 9>/tmp/8311-vlansd.lock
@@ -76,7 +77,7 @@ while true; do
 	if [ -n "$CMD" ] && [ -d "/sys/devices/virtual/net/gem-omci" ]; then
 		# File output avoids holding a command-substitution pipe open if a timed
 		# out hook leaves a descendant running. flock remains the overlap guard.
-		if timeout -k 2 10 /usr/sbin/8311-detect-config.sh -H > "$OUTPUT" 2>&1 &&
+		if capture_combined "$OUTPUT" 1048576 timeout -k 2 10 /usr/sbin/8311-detect-config.sh -H &&
 			HASH=$(read_fingerprint); then
 			HOOK_HASH="absent"
 			if [ -f "$HOOK" ]; then
@@ -86,7 +87,7 @@ while true; do
 			# Every six healthy cycles, check rules even if the topology did not
 			# change. Driver/OLT updates can remove filters from existing links.
 			if ! $FAILED && [ -n "$LAST_HASH" ] && [ "$RULE_CHECK_CYCLES" -le 0 ]; then
-				if timeout -k 1 10 /usr/sbin/8311-vlan-rules-hash.sh > "$OUTPUT" 2>&1 &&
+				if capture_combined "$OUTPUT" 1048576 timeout -k 1 10 /usr/sbin/8311-vlan-rules-hash.sh &&
 					RULE_HASH=$(read_fingerprint); then
 					RULE_CHECK_CYCLES=6
 					if [ "$RULE_HASH" != "$LAST_RULE_HASH" ]; then
@@ -102,9 +103,9 @@ while true; do
 				# Cached detection also contains the old local VLAN settings.
 				$REDETECT && CMD="rm -f /tmp/8311-config.sh && $CMD"
 				publish_status applying none 0
-				if timeout -k 5 30 flock -n /tmp/8311-fix-vlans.lock -c "$CMD" > "$OUTPUT" 2>&1; then
+				if capture_combined "$OUTPUT" 1048576 timeout -k 5 30 flock -n /tmp/8311-fix-vlans.lock -c "$CMD"; then
 					tail -c 8192 "$OUTPUT" | to_console
-					if timeout -k 1 10 /usr/sbin/8311-vlan-rules-hash.sh > "$OUTPUT" 2>&1 &&
+					if capture_combined "$OUTPUT" 1048576 timeout -k 1 10 /usr/sbin/8311-vlan-rules-hash.sh &&
 						LAST_RULE_HASH=$(read_fingerprint); then
 						RULE_CHECK_CYCLES=6
 						LAST_HASH="$HASH"

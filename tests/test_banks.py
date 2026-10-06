@@ -1,6 +1,8 @@
 """Image and boot-selection regressions; all block devices and writes are fixtures."""
 import shlex
 import shutil
+import os
+import unittest
 import struct
 import sys
 import time
@@ -140,6 +142,37 @@ printf executable > "$6/bin/busybox"
         result = self.run_script(self.check, "B")
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("ready", result.stdout)
+
+    @unittest.skipIf(os.name == "nt", "Requires real FIFO input for the CRC helper")
+    def test_full_check_does_not_stage_component_payloads(self):
+        # The Windows FIFO adapter stages data; Linux exercises real pipes.
+        payload = b"large bootcore payload" * 250000
+        (self.root / "dev/ubi0_5").write_bytes(self.uimage(payload))
+        ubinfo = self.bin / "ubinfo"
+        ubinfo.write_text(ubinfo.read_text().replace("4096 bytes", "8388608 bytes"), newline="\n")
+        helper = self.root / "binary_tools.py"
+        helper.write_text(helper.read_text() + '''
+if kind == 'crc32':
+    root = pathlib.Path(__file__).parent
+    sizes = [p.stat().st_size for p in (root/'tmp').rglob('*') if p.is_file()]
+    with (root/'temporary-sizes').open('a') as output:
+        output.write(str(max(sizes, default=0))+'\\n')
+''', newline="\n")
+        result = self.run_script(self.check, "B")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "ready\n")
+        self.assertLess(max(map(int, (self.root / "temporary-sizes").read_text().split())), 131072)
+
+    def test_short_payload_cannot_pass_with_a_matching_crc(self):
+        path = self.root / "dev/ubi0_4"
+        data = bytearray(path.read_bytes())
+        struct.pack_into('>I', data, 12, len(data) - 64 + 17)
+        struct.pack_into('>I', data, 4, 0)
+        struct.pack_into('>I', data, 4, zlib.crc32(data[:64]))
+        path.write_bytes(data)
+        result = self.run_script(self.check, "B")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.operations(), [])
 
 
 class BankControlTests(ShellFixture):

@@ -112,20 +112,6 @@ sha256() {
 	printf '%s\n' "$hash"
 }
 
-# Check both producers without copying a complete image into RAM or pipefail.
-stream_digest() {
-	local algorithm="$1" output reader code=0
-	shift
-	mkfifo "$WORKDIR/stream" || return 1
-	"$@" > "$WORKDIR/stream" &
-	reader=$!
-	output=$("$algorithm" < "$WORKDIR/stream") || code=1
-	wait "$reader" || code=1
-	rm -f "$WORKDIR/stream"
-	[ "$code" -eq 0 ] || return 1
-	printf '%s\n' "$output"
-}
-
 active_fwbank() {
 	grep -E -o '\brootfsname=rootfs[AB]\b' /proc/cmdline | grep -E -o '[AB]$'
 }
@@ -204,7 +190,7 @@ validate_image() {
 		header_crc=$(crc32 < "$WORKDIR/header.crc") || _err "Unable to check uImage header CRC."
 		[ "$header_crc" = "$(hex 4 4)" ] || _err "Invalid uImage header CRC."
 		local data_crc
-		data_crc=$(stream_digest crc32 tail -c +65 "$IMAGE") || _err "Unable to check uImage payload."
+		data_crc=$(stream_digest "$WORKDIR" crc32 "$((SIZE - 64))" tail -c +65 "$IMAGE") || _err "Unable to check uImage payload."
 		[ "$data_crc" = "$(hex 24 4)" ] || _err "Invalid uImage data CRC."
 	fi
 	# Validation-only runs do not need to retain all three images at once.
@@ -229,7 +215,7 @@ install_image() {
 	echo "Installing $NAME image to $UBI_VOLNAME ($UBI)..."
 	ubiupdatevol -s "$SIZE" "$UBI" - < "$WORKDIR/$FILE" || _err "Error installing $NAME to '$UBI'."
 	echo -n "Validating installed $NAME image..."
-	ACTUAL_SHA256=$(stream_digest sha256sum head -c "$SIZE" "$UBI") || _err "Unable to read back $NAME."
+	ACTUAL_SHA256=$(stream_digest "$WORKDIR" sha256sum "$SIZE" head -c "$SIZE" "$UBI") || _err "Unable to read back $NAME."
 	[ "$ACTUAL_SHA256" = "${ACTUAL_SHA256%% *}  -" ] ||
 		[ "$ACTUAL_SHA256" = "${ACTUAL_SHA256%% *} *-" ] || _err "Invalid $NAME readback checksum."
 	ACTUAL_SHA256=${ACTUAL_SHA256%% *}
